@@ -1,5 +1,4 @@
 import json
-import time
 from telebot import types
 from database import load_products
 
@@ -39,7 +38,6 @@ def register_bin_handlers(bot):
             return
 
         bot.send_message(user_id, "📦 **Available BINs**\nClick 'Buy' on any BIN from the list below to purchase.")
-        time.sleep(1) # A small delay to make the bot feel more natural
 
         # Loop through each BIN and send it as a separate message
         for index, bin_data in enumerate(bins):
@@ -65,7 +63,6 @@ def register_bin_handlers(bot):
             markup.add(types.InlineKeyboardButton(f"💵 Buy - ${price}", callback_data=callback_data))
             
             bot.send_message(user_id, message_text, parse_mode="Markdown", reply_markup=markup)
-            time.sleep(0.5) # This delay creates the "pop-in" effect
 
         # After sending all BINs, send a button to return to the main menu
         main_menu_markup = types.InlineKeyboardMarkup()

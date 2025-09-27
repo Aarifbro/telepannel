@@ -72,18 +72,18 @@ def send_main_menu(chat_id, text, message_id=None):
     """Sends the main menu with dynamic admin/owner panel buttons."""
     bot.send_chat_action(chat_id, 'typing')
     markup = types.InlineKeyboardMarkup(row_width=2)
-    # Standard menu buttons
+    # Standard menu buttons with new emojis and Personal Area
     markup.add(
-        types.InlineKeyboardButton("💳 Credit Cards", callback_data="cc_menu"),
-        types.InlineKeyboardButton("📦 BINs", callback_data="bin_menu"),
+        types.InlineKeyboardButton("� Personal Area", callback_data="personal_area"),
+        types.InlineKeyboardButton("💳 Cards", callback_data="cc_menu"),
+        types.InlineKeyboardButton("�️ BINs", callback_data="bin_menu"),
         types.InlineKeyboardButton("🎁 Gift Cards", callback_data="giftcards_menu"),
         types.InlineKeyboardButton("💾 Dumps", callback_data="dumps_menu"),
-        types.InlineKeyboardButton("🛡️ Buy Hacks", callback_data="hacks_menu"),
-        types.InlineKeyboardButton("️ RDP", callback_data="rdp_menu"),
+        types.InlineKeyboardButton("�️‍♂️ Hacks", callback_data="hacks_menu"),
+        types.InlineKeyboardButton("🖥️ RDP", callback_data="rdp_menu"),
         types.InlineKeyboardButton("📚 Methods", callback_data="method_menu"),
-        types.InlineKeyboardButton("⚡ Other", callback_data="other_menu"),
-        types.InlineKeyboardButton("🛠️ Support", callback_data="support"),
-        types.InlineKeyboardButton("📜 Rules", callback_data="rules")
+        types.InlineKeyboardButton("✨ Other", callback_data="other_menu"),
+        types.InlineKeyboardButton("🆘 Help", callback_data="support")
     )
     # Determine roles
     is_owner = chat_id == ADMIN_ID
@@ -297,7 +297,7 @@ def start_command(message):
 
     add_user(user_id, username, referrer_code)
 
-    intro_text = "🎉 **Welcome to the Premium Shop Bot!**\n\nYour one-stop shop for digital goods."
+    intro_text = "<b>🎉 Welcome to the Premium Shop Bot!</b>\n\nYour one-stop shop for digital goods."
 
     if not check_force_join(bot, user_id):
         from config import FORCE_CHANNEL_LINKS
@@ -307,19 +307,16 @@ def start_command(message):
             markup.add(types.InlineKeyboardButton("🔗 Join Channel/Group", url=link))
         markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
         force_join_text = f"{intro_text}\n\n⚠️ To get full access, you must first join all our partner channels/groups."
-        bot.send_message(user_id, force_join_text, reply_markup=markup, parse_mode="Markdown")
+        bot.send_message(user_id, force_join_text, reply_markup=markup, parse_mode="HTML")
     else:
-        send_main_menu(user_id, intro_text + "\n\n👇 Please choose an option from the menu to begin.")
+        send_main_menu(user_id, intro_text + "\n\n👇 <b>Please choose an option from the menu to begin.</b>",)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_join")
 def joined_callback(call):
     """Handles the 'I Have Joined' button."""
     if check_force_join(bot, call.from_user.id):
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        # Show rules first, then main menu
-        rules_text = """📜 <b>RULES OF BUYING CARD [ CC ]</b>\n\nTo ensure a fair and secure experience for everyone, please adhere to the following rules:\n\n💎 <b>Agreement:</b> Buying cards in our service means you automatically agree with all the stated rules.\n💎 <b>Validation:</b> When issuing the material, we provide a screenshot that the product is valid and has been checked at the time of sale.\n💎 <b>Usage Guarantee:</b> We cannot guarantee the success of using the card, as its accessibility depends on the service you are using it on. The responsibility for its use is yours.\n💎 <b>Responsibility:</b> We are not responsible for your actions with the card after purchase.\n💎 <b>No Training:</b> We do not provide advice or training on how to cash out or use the material. Remember, we sell the material itself, not training on how to realize its value.\n💎 <b>Validity at Sale:</b> From our side, we guarantee that the CC will be live and valid at the time it is delivered to you."""
-        bot.send_message(call.message.chat.id, rules_text, parse_mode="HTML")
-        send_main_menu(call.message.chat.id, "✅ Thank you for joining! You can now use the bot.")
+        send_main_menu(call.message.chat.id, "<b>✅ Thank you for joining! You can now use the bot.</b>")
     else:
         bot.answer_callback_query(call.id, "❌ You haven't joined the channel yet.", show_alert=True)
 
