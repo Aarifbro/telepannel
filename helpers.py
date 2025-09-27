@@ -1,16 +1,17 @@
 import random
-from config import FORCE_CHANNEL_ID, ADMIN_ID
+from config import FORCE_CHANNEL_IDS, ADMIN_ID
 
 def check_force_join(bot, user_id):
     """
-    Checks if a user is a member of the force-join channel.
-    Returns True if they are a member, False otherwise.
+    Checks if a user is a member of ALL force-join channels/groups in FORCE_CHANNEL_IDS.
+    Returns True only if they are a member of every channel/group.
     """
     try:
-        # Get the user's status in the specified channel.
-        member = bot.get_chat_member(FORCE_CHANNEL_ID, user_id)
-        # The user is considered a member if their status is not 'left' or 'kicked'.
-        return member.status not in ["left", "kicked"]
+        for channel_id in FORCE_CHANNEL_IDS:
+            member = bot.get_chat_member(channel_id, user_id)
+            if member.status in ["left", "kicked"]:
+                return False
+        return True
     except Exception as e:
         print(f"Force join check failed: {e}")
         return False
