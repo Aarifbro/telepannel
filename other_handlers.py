@@ -425,7 +425,13 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             # Perform validation to ensure the essential keys are present.
             if not all(key in new_item_data for key in ["name", "price", "description"]):
                 raise ValueError("The JSON is missing one of the required keys: name, price, description.")
-            
+
+            # For BINs, auto-fill missing BIN-specific fields with defaults
+            if category == "bins":
+                for field in ["bin", "status", "country", "info", "bank"]:
+                    if field not in new_item_data:
+                        new_item_data[field] = "N/A"
+
             products_data = load_products()
             products_data[category].append(new_item_data)
             save_products(products_data)
