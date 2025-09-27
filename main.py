@@ -300,11 +300,13 @@ def start_command(message):
     intro_text = "🎉 **Welcome to the Premium Shop Bot!**\n\nYour one-stop shop for digital goods."
 
     if not check_force_join(bot, user_id):
-        from config import FORCE_CHANNEL_LINK
+        from config import FORCE_CHANNEL_LINKS
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔗 Join Channel", url=FORCE_CHANNEL_LINK))
+        # Add a join button for each channel/group
+        for link in FORCE_CHANNEL_LINKS:
+            markup.add(types.InlineKeyboardButton("🔗 Join Channel/Group", url=link))
         markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
-        force_join_text = f"{intro_text}\n\n⚠️ To get full access, you must first join our partner channel."
+        force_join_text = f"{intro_text}\n\n⚠️ To get full access, you must first join all our partner channels/groups."
         bot.send_message(user_id, force_join_text, reply_markup=markup, parse_mode="Markdown")
     else:
         send_main_menu(user_id, intro_text + "\n\n👇 Please choose an option from the menu to begin.")
