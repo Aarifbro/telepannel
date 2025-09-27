@@ -1,0 +1,11 @@
+[
+  {"name": "United States", "flag": "🇺🇸"},
+  {"name": "India", "flag": "🇮🇳"},
+  {"name": "United Kingdom", "flag": "🇬🇧"},
+  {"name": "Canada", "flag": "🇨🇦"},
+  {"name": "Germany", "flag": "🇩🇪"},
+  {"name": "France", "flag": "🇫🇷"},
+  {"name": "Japan", "flag": "🇯🇵"},
+  {"name": "China", "flag": "🇨🇳"},
+  {"name": "Brazil", "flag": "🇧🇷"}
+]

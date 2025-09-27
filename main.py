@@ -1,294 +1,471 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Telegram Bot UI</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #3e3e3e;
-        }
-        .message-panel {
-            flex-grow: 1;
-            padding: 1rem;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            background-image: url('https://i.ibb.co/6P0Y9x4/1000079557.jpg');
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-        }
-        .message-bubble {
-            max-width: 80%;
-            padding: 10px 15px;
-            border-radius: 20px;
-            position: relative;
-            word-wrap: break-word;
-        }
-        .bot-message {
-            background-color: rgba(255, 255, 255, 0.9);
-            color: #333;
-            align-self: flex-start;
-            border-bottom-left-radius: 5px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-        }
-        .user-message {
-            background-color: rgba(220, 248, 198, 0.9);
-            color: #333;
-            align-self: flex-end;
-            border-bottom-right-radius: 5px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-        }
-        .bot-message .timestamp, .user-message .timestamp {
-            font-size: 0.7rem;
-            color: #888;
-            margin-top: 4px;
-            text-align: right;
-            display: block;
-        }
-        .btn-panel {
-            padding: 1rem;
-            background-color: #1a1a1a;
-            border-top: 1px solid #333;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            justify-content: center;
-        }
-        .btn {
-            background-color: #333;
-            color: #fff;
-            padding: 12px 18px;
-            border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            font-weight: 500;
-            transition: background-color 0.2s, transform 0.1s;
-        }
-        .btn:hover {
-            background-color: #444;
-            transform: translateY(-1px);
-        }
-        .btn-full {
-            width: 100%;
-        }
-        .btn-half {
-            width: calc(50% - 4px);
-        }
-        .btn-third {
-            width: calc(33.333% - 6px);
-        }
-        .icon {
-            margin-right: 8px;
-            font-size: 1.2rem;
-        }
-        .panel-container {
-            min-height: 80vh;
-        }
+# --- Gift Card Status Storage ---
+import json
 
-        /* Styles for the new bottom nav panel */
-        .bottom-nav-container {
-            background-color: #1a1a1a;
-            padding: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-        }
-        .nav-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            color: #aaa;
-            font-size: 0.75rem;
-            font-weight: 500;
-            cursor: pointer;
-            text-align: center;
-            transition: color 0.2s;
-            flex: 1;
-        }
-        .nav-item:hover {
-            color: #fff;
-        }
-        .nav-icon {
-            font-size: 1.5rem;
-            margin-bottom: 4px;
-        }
-        .nav-cart {
-            background-color: #34c759;
-            color: #fff;
-            padding: 1rem;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-            font-size: 2rem;
-            cursor: pointer;
-            transition: transform 0.2s;
-            transform: translateY(-25%); /* Lift it above the panel */
-        }
-        .nav-cart:hover {
-            transform: translateY(-28%) scale(1.05);
-        }
-    </style>
-</head>
-<body class="bg-gray-900 flex items-center justify-center min-h-screen text-gray-100">
+# --- Section Status Storage ---
+SECTION_STATUS_FILE = "section_status.json"
+SECTION_STATUS_OPTIONS = [
+    ("coming_soon", "🟡 Coming Soon"),
+    ("error", "🔴 Error"),
+    ("maintenance", "🛠️ Under Maintenance"),
+    ("available", "🟢 Available")
+]
+SECTION_KEYS = [
+    ("gift_cards", "Gift Cards"),
+    ("dumps", "Dumps"),
+    ("hacks", "Hacks"),
+    ("cc", "Credit Cards"),
+    ("bins", "BINs"),
+    ("rdp", "RDP"),
+    ("methods", "Methods"),
+    ("other", "Other")
+]
 
-    <div class="w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl mx-4 my-8 bg-[#2d2d2d] shadow-lg rounded-3xl overflow-hidden flex flex-col panel-container">
+def set_section_status(section_key, status_key):
+    try:
+        with open(SECTION_STATUS_FILE, "r") as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+    data[section_key] = status_key
+    with open(SECTION_STATUS_FILE, "w") as f:
+        json.dump(data, f)
 
-        <!-- Bot Header -->
-        <div class="bg-[#2d2d2d] text-white p-4 flex items-center shadow-md border-b border-[#3e3e3e]">
-            <div class="h-10 w-10 bg-purple-500 rounded-full flex items-center justify-center text-xl font-bold mr-3">👻</div>
-            <div>
-                <h1 class="font-semibold text-lg">Deleted Account</h1>
-                <p class="text-sm text-gray-400">Bot</p>
-            </div>
-        </div>
+def get_section_status(section_key):
+    try:
+        with open(SECTION_STATUS_FILE, "r") as f:
+            data = json.load(f)
+            return data.get(section_key, "coming_soon")
+    except Exception:
+        return "coming_soon"
 
-        <!-- Chat Panel -->
-        <div id="message-panel" class="message-panel">
-            <!-- Messages will be injected here by JS -->
-        </div>
 
-        <!-- Dynamic Button Panel -->
-        <div id="dynamic-btn-panel" class="btn-panel">
-            <!-- Sub-menu buttons (e.g., crypto options) will be injected here by JS -->
-        </div>
+from payment_handler import register_payment_handlers, show_payment_options
+import telebot
+import time
+import requests
+from telebot import types
 
-        <!-- Fixed Bottom Navigation Bar -->
-        <div id="bottom-nav" class="bottom-nav-container">
-            <div class="nav-item" data-action="Shop">
-                <span class="nav-icon">🛍️</span>
-                <span>Shop</span>
-            </div>
-            <div class="nav-item" data-action="Add money">
-                <span class="nav-icon">💰</span>
-                <span>Add money</span>
-            </div>
-            <div class="nav-cart" data-action="Cart">
-                <span class="nav-icon">🛒</span>
-            </div>
-            <div class="nav-item" data-action="FAQ">
-                <span class="nav-icon">❓</span>
-                <span>FAQ</span>
-            </div>
-            <div class="nav-item" data-action="Help">
-                <span class="nav-icon">🆘</span>
-                <span>Help</span>
-            </div>
-        </div>
-    </div>
+# Import functions from handler files
+from config import API_TOKEN, ADMIN_ID
+from database import init_db, add_user
+from helpers import check_force_join, notify_admin
+from cc_handler import register_cc_handlers
+from bin_handler import register_bin_handlers
+from payment_handler import register_payment_handlers
+from other_handlers import register_other_handlers
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const messagePanel = document.getElementById('message-panel');
-            const dynamicBtnPanel = document.getElementById('dynamic-btn-panel');
-            const bottomNav = document.getElementById('bottom-nav');
+# Initialize the bot
+bot = telebot.TeleBot(API_TOKEN)
 
-            // --- UI Rendering Functions ---
-            function createMessage(text, type) {
-                const messageDiv = document.createElement('div');
-                messageDiv.classList.add('message-bubble', type === 'bot' ? 'bot-message' : 'user-message');
-                messageDiv.innerHTML = `${text}<span class="timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
-                messagePanel.appendChild(messageDiv);
-                messagePanel.scrollTop = messagePanel.scrollHeight;
-            }
+# Dictionary to track user states (e.g., awaiting input for admin panel)
+user_states = {}
 
-            function createButton(text, action, icon = '', widthClass = 'btn-half') {
-                const button = document.createElement('button');
-                button.classList.add('btn', widthClass);
-                button.setAttribute('data-action', action);
-                button.innerHTML = `${icon ? `<span class="icon">${icon}</span>` : ''}${text}`;
-                button.addEventListener('click', handleButtonClick);
-                return button;
-            }
-            
-            function clearDynamicPanel() {
-                dynamicBtnPanel.innerHTML = '';
-                dynamicBtnPanel.style.display = 'none';
-            }
-            
-            function showDynamicPanel() {
-                 dynamicBtnPanel.style.display = 'flex';
-            }
+# =================================================================
+# ======================== START & MAIN MENU ========================
+# =================================================================
 
-            function renderTopUpMenu() {
-                dynamicBtnPanel.innerHTML = '';
-                dynamicBtnPanel.appendChild(createButton('BTC', 'BTC', '₿', 'btn-full'));
-                dynamicBtnPanel.appendChild(createButton('LTC', 'LTC', 'Ł', 'btn-full'));
-                dynamicBtnPanel.appendChild(createButton('SOL', 'SOL', '◎', 'btn-full'));
-                dynamicBtnPanel.appendChild(createButton('ETH', 'ETH', 'Ξ', 'btn-full'));
-                dynamicBtnPanel.appendChild(createButton('BNB (Binance Coin)', 'BNB', '', 'btn-full'));
-                dynamicBtnPanel.appendChild(createButton('Back', 'Back', '←', 'btn-full'));
-                showDynamicPanel();
-            }
+# ======================== MAIN MENU & MANAGE ORDERS PANEL ========================
+import sqlite3
+from config import DB_NAME, ADMIN_ID
 
-            function renderCartMenu() {
-                dynamicBtnPanel.innerHTML = '';
-                const cartSummary = document.createElement('div');
-                cartSummary.classList.add('w-full', 'bg-gray-700', 'text-gray-300', 'p-4', 'rounded-xl', 'text-sm', 'leading-tight');
-                cartSummary.innerHTML = `
-                    <p><span class="font-bold">US</span> Balance: $2K - $10K NON VBV | Total: $70.00 | Qty: 1</p>
-                    <p class="mt-2 font-bold">Grand total: 70.00 $</p>
-                `;
-                dynamicBtnPanel.appendChild(cartSummary);
-                dynamicBtnPanel.appendChild(createButton('Confirm', 'Confirm Cart', '✅', 'btn-half'));
-                dynamicBtnPanel.appendChild(createButton('Cancel', 'Cancel Cart', '❌', 'btn-half'));
-                showDynamicPanel();
-            }
+def send_main_menu(chat_id, text, message_id=None):
+    """Sends the main menu with dynamic admin/owner panel buttons."""
+    bot.send_chat_action(chat_id, 'typing')
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    # Standard menu buttons
+    markup.add(
+        types.InlineKeyboardButton("💳 Credit Cards", callback_data="cc_menu"),
+        types.InlineKeyboardButton("📦 BINs", callback_data="bin_menu"),
+        types.InlineKeyboardButton("🎁 Gift Cards", callback_data="giftcards_menu"),
+        types.InlineKeyboardButton("💾 Dumps", callback_data="dumps_menu"),
+        types.InlineKeyboardButton("🛡️ Buy Hacks", callback_data="hacks_menu"),
+        types.InlineKeyboardButton("️ RDP", callback_data="rdp_menu"),
+        types.InlineKeyboardButton("📚 Methods", callback_data="method_menu"),
+        types.InlineKeyboardButton("⚡ Other", callback_data="other_menu"),
+        types.InlineKeyboardButton("🛠️ Support", callback_data="support"),
+        types.InlineKeyboardButton("📜 Rules", callback_data="rules")
+    )
+    # Determine roles
+    is_owner = chat_id == ADMIN_ID
+    is_global_admin = False
+    is_section_admin = False
+    try:
+        if not is_owner:
+            with sqlite3.connect(DB_NAME) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM admins WHERE user_id = ?", (chat_id,))
+                is_global_admin = cursor.fetchone() is not None
+                cursor.execute("SELECT 1 FROM section_admins WHERE user_id = ?", (chat_id,))
+                is_section_admin = cursor.fetchone() is not None
+    except Exception:
+        pass
 
-            // --- Bot Logic ---
-            const botResponses = {
-                'start': "Hi, this is the Squirrel store. You can view all product categories by clicking the buttons below.",
-                'Shop': "Welcome to the shop! Please select a product category from the list.",
-                'Add money': "Choose a top-up method:",
-                'FAQ': "You've selected the FAQ. Here are the answers to our most common questions.",
-                'Help': "You've selected Help. Please type your question, and a support agent will assist you shortly.",
-                'BTC': "You have chosen to top up with BTC. Please send the funds to the provided address.",
-                'LTC': "You have chosen to top up with LTC. Please send the funds to the provided address.",
-                'SOL': "You have chosen to top up with SOL. Please send the funds to the provided address.",
-                'ETH': "You have chosen to top up with ETH. Please send the funds to the provided address.",
-                'BNB': "You have chosen to top up with BNB. Please send the funds to the provided address.",
-                'Confirm Cart': "Your cart has been confirmed and your purchase is complete. Thank you!",
-                'Cancel Cart': "Your cart has been cleared. You can continue shopping.",
-            };
+    # Owner: add Status Manage button
+    if is_owner:
+        markup.add(types.InlineKeyboardButton("🛠️ Status Manage", callback_data="status_manage"))
+        markup.add(
+            types.InlineKeyboardButton("👑 Owner Panel", callback_data="owner_panel"),
+            types.InlineKeyboardButton("📦 Manage Orders", callback_data="manage_orders_panel")
+        )
+    elif is_global_admin:
+        markup.add(types.InlineKeyboardButton("🔐 Admin Panel", callback_data="admin_panel"))
+        markup.add(types.InlineKeyboardButton("📦 Manage Orders", callback_data="manage_orders_panel"))
+    elif is_section_admin:
+        markup.add(types.InlineKeyboardButton("📦 Manage Orders", callback_data="manage_orders_panel"))
 
-            function handleButtonClick(event) {
-                const action = event.target.getAttribute('data-action');
-                createMessage(action, 'user');
-                
-                setTimeout(() => {
-                    clearDynamicPanel();
-                    if (action === "Add money") {
-                        createMessage(botResponses[action], 'bot');
-                        renderTopUpMenu();
-                    } else if (action === "Cart") {
-                        createMessage("Checkout cart?", 'bot');
-                        renderCartMenu();
-                    } else if (botResponses[action]) {
-                        createMessage(botResponses[action], 'bot');
-                    } else {
-                        createMessage("Sorry, I don't have a response for that action yet.", 'bot');
-                    }
-                }, 1000);
-            }
+    # Always send or edit the menu message
+    try:
+        if message_id:
+            bot.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode="Markdown")
+        else:
+            bot.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
+    except Exception:
+        pass
 
-            // Event listener for the bottom navigation bar buttons
-            bottomNav.querySelectorAll('.nav-item, .nav-cart').forEach(item => {
-                item.addEventListener('click', handleButtonClick);
-            });
+# Dedicated Manage Orders panel for admins/section-admins
+@bot.callback_query_handler(func=lambda call: call.data == "manage_orders_panel")
+def manage_orders_panel(call):
+    user_id = call.from_user.id
+    is_global_admin = False
+    section_admin_sections = []
+    is_owner = user_id == ADMIN_ID
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
+        is_global_admin = cursor.fetchone() is not None
+        cursor.execute("SELECT section FROM section_admins WHERE user_id = ?", (user_id,))
+        section_admin_sections = [row[0] for row in cursor.fetchall()]
+    if not (is_owner or is_global_admin or section_admin_sections):
+        bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+        return
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    # Define all main product sections for order management
+    all_sections = [
+        ("cc", "Credit Cards"),
+        ("bins", "BINs"),
+        ("gift_cards", "Gift Cards"),
+        ("dumps", "Dumps"),
+        ("hacks", "Hacks"),
+        ("rdp", "RDP"),
+        ("methods", "Methods"),
+        ("other", "Other")
+    ]
+    if is_owner or is_global_admin:
+        markup.add(types.InlineKeyboardButton("View All Orders", callback_data="admin_orders"))
+        # Owner/global admin can manage all sections
+        for section_key, section_label in all_sections:
+            markup.add(types.InlineKeyboardButton(f"Manage {section_label} Orders", callback_data=f"admin_orders_{section_key}"))
+    else:
+        # Section admin: only show their assigned sections (and only if the section is valid)
+        for section in section_admin_sections:
+            label = next((lbl for key, lbl in all_sections if key == section), None)
+            if label:
+                markup.add(types.InlineKeyboardButton(f"Manage {label} Orders", callback_data=f"admin_orders_{section}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+    bot.edit_message_text("<b>📦 Manage Orders Panel</b>\n\nSelect which orders to manage:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+# Buy Hacks main menu
+@bot.callback_query_handler(func=lambda call: call.data == "hacks_menu")
+def hacks_menu(call):
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("🎣 Premium Phishing Kits", callback_data="phishing_kits_menu"))
+    markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+    bot.edit_message_text("<b>🛡️ Buy Hacks</b>\n\nSelect a category:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-            // Initial state on page load
-            window.onload = () => {
-                createMessage("Hi, this is the Squirrel store. You can view all product categories by clicking the buttons below.", 'bot');
-                // The main menu is now static at the bottom, so no need to render it dynamically.
-            };
-        });
-    </script>
-</body>
-</html>
+# Premium Phishing Kits submenu
+from database import load_products
+@bot.callback_query_handler(func=lambda call: call.data == "phishing_kits_menu")
+def phishing_kits_menu(call):
+    products = load_products().get("phishing_kits", [])
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    if not products:
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="hacks_menu"))
+        bot.edit_message_text("<b>🎣 Premium Phishing Kits</b>\n\nNo kits available at the moment.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        return
+    for idx, item in enumerate(products):
+        name = item.get("name", "Unnamed Kit")
+        price = item.get("price", "?")
+        markup.add(types.InlineKeyboardButton(f"🛒 {name} - ${price}", callback_data=f"phishing_kit_detail_{idx}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="hacks_menu"))
+    bot.edit_message_text("<b>🎣 Premium Phishing Kits</b>\n\nSelect a kit to view details:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+# Show phishing kit details and buy button
+@bot.callback_query_handler(func=lambda call: call.data.startswith("phishing_kit_detail_"))
+def phishing_kit_detail(call):
+    idx = int(call.data.split("_")[-1])
+    products = load_products().get("phishing_kits", [])
+    if idx >= len(products):
+        bot.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
+        return
+    item = products[idx]
+    name = item.get("name", "Unnamed Kit")
+    price = item.get("price", "?")
+    desc = item.get("description", "No description.")
+    text = f"<b>{name}</b>\n\n<b>Price:</b> ${price}\n<b>Description:</b> {desc}\n\nTo purchase, click the button below."
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("💸 Buy Now", callback_data=f"buy_phishing_kit_{idx}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Back to Kits", callback_data="phishing_kits_menu"))
+    markup.add(types.InlineKeyboardButton("⬅️ Main Menu", callback_data="main_menu"))
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+# Buy phishing kit (route to payment)
+from payment_handler import show_payment_options
+
+# --- Payment Option: Add Screenshot Upload and Confirmation ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_phishing_kit_"))
+def buy_phishing_kit(call):
+    idx = int(call.data.split("_")[-1])
+    products = load_products().get("phishing_kits", [])
+    if idx >= len(products):
+        bot.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
+        return
+    item = products[idx]
+    price = item.get("price", 0)
+    name = item.get("name", "Unnamed Kit")
+    # Show payment options with screenshot upload
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("➡️ Proceed to Payment", callback_data=f"proceed_payment_{idx}"))
+    markup.add(types.InlineKeyboardButton("📸 Send Payment Screenshot", callback_data=f"send_ss_{idx}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Back to Kits", callback_data="phishing_kits_menu"))
+    bot.edit_message_text(f"<b>{name}</b>\n\n<b>Price:</b> ${price}\n\nChoose a payment option:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+# Handler for Proceed to Payment (original flow)
+@bot.callback_query_handler(func=lambda call: call.data.startswith("proceed_payment_"))
+def proceed_payment(call):
+    idx = int(call.data.split("_")[-1])
+    products = load_products().get("phishing_kits", [])
+    if idx >= len(products):
+        bot.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
+        return
+    item = products[idx]
+    price = item.get("price", 0)
+    name = item.get("name", "Unnamed Kit")
+    show_payment_options(bot, call, name, price, item, "phishing_kits_menu")
+
+# Handler for Send Payment Screenshot
+@bot.callback_query_handler(func=lambda call: call.data.startswith("send_ss_"))
+def send_payment_screenshot_prompt(call):
+    idx = int(call.data.split("_")[-1])
+    products = load_products().get("phishing_kits", [])
+    if idx >= len(products):
+        bot.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
+        return
+    user_states[call.from_user.id] = f"awaiting_ss_{idx}"
+    bot.send_message(call.from_user.id, "📸 Please upload your payment screenshot now.")
+
+# Handler to receive screenshot and confirm payment
+@bot.message_handler(content_types=['photo'])
+def receive_payment_screenshot(message):
+    state = user_states.get(message.from_user.id, "")
+    if state.startswith("awaiting_ss_"):
+        idx = int(state.split("_")[-1])
+        products = load_products().get("phishing_kits", [])
+        if idx >= len(products):
+            bot.send_message(message.chat.id, "Invalid product selection.")
+            return
+        # Save screenshot file_id for admin review (not implemented)
+        file_id = message.photo[-1].file_id
+        # Ask user to confirm payment after sending screenshot
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("✅ Confirm Payment", callback_data=f"confirm_ss_{idx}_{file_id}"))
+        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="main_menu"))
+        bot.send_message(message.chat.id, "Screenshot received! Now confirm your payment:", reply_markup=markup)
+        del user_states[message.from_user.id]
+
+# Handler for Confirm Payment after screenshot
+@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_ss_"))
+def confirm_payment_screenshot(call):
+    parts = call.data.split("_")
+    idx = int(parts[2])
+    file_id = parts[3]
+    products = load_products().get("phishing_kits", [])
+    if idx >= len(products):
+        bot.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
+        return
+    # Notify owner/admin with screenshot file_id (not implemented)
+    bot.send_message(ADMIN_ID, f"User {call.from_user.id} submitted a payment screenshot for {products[idx].get('name','?')}.", reply_markup=None)
+    bot.send_photo(ADMIN_ID, file_id, caption=f"Payment screenshot from user {call.from_user.id} for {products[idx].get('name','?')}")
+    bot.answer_callback_query(call.id, "Payment confirmation sent! Await admin approval.", show_alert=True)
+
+@bot.message_handler(commands=["start"])
+def start_command(message):
+    """Handles the /start command, including referrals."""
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+
+    parts = message.text.split()
+    referrer_code = parts[1] if len(parts) > 1 else None
+
+    add_user(user_id, username, referrer_code)
+
+    intro_text = "🎉 **Welcome to the Premium Shop Bot!**\n\nYour one-stop shop for digital goods."
+
+    if not check_force_join(bot, user_id):
+        from config import FORCE_CHANNEL_LINK
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔗 Join Channel", url=FORCE_CHANNEL_LINK))
+        markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
+        force_join_text = f"{intro_text}\n\n⚠️ To get full access, you must first join our partner channel."
+        bot.send_message(user_id, force_join_text, reply_markup=markup, parse_mode="Markdown")
+    else:
+        send_main_menu(user_id, intro_text + "\n\n👇 Please choose an option from the menu to begin.")
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_join")
+def joined_callback(call):
+    """Handles the 'I Have Joined' button."""
+    if check_force_join(bot, call.from_user.id):
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        # Show rules first, then main menu
+        rules_text = """📜 <b>RULES OF BUYING CARD [ CC ]</b>\n\nTo ensure a fair and secure experience for everyone, please adhere to the following rules:\n\n💎 <b>Agreement:</b> Buying cards in our service means you automatically agree with all the stated rules.\n💎 <b>Validation:</b> When issuing the material, we provide a screenshot that the product is valid and has been checked at the time of sale.\n💎 <b>Usage Guarantee:</b> We cannot guarantee the success of using the card, as its accessibility depends on the service you are using it on. The responsibility for its use is yours.\n💎 <b>Responsibility:</b> We are not responsible for your actions with the card after purchase.\n💎 <b>No Training:</b> We do not provide advice or training on how to cash out or use the material. Remember, we sell the material itself, not training on how to realize its value.\n💎 <b>Validity at Sale:</b> From our side, we guarantee that the CC will be live and valid at the time it is delivered to you."""
+        bot.send_message(call.message.chat.id, rules_text, parse_mode="HTML")
+        send_main_menu(call.message.chat.id, "✅ Thank you for joining! You can now use the bot.")
+    else:
+        bot.answer_callback_query(call.id, "❌ You haven't joined the channel yet.", show_alert=True)
+
+
+
+# Section status panel for each section (example: Gift Cards)
+def get_section_status_label(section_key):
+    status_key = get_section_status(section_key)
+    return next((label for key, label in SECTION_STATUS_OPTIONS if key == status_key), "🟡 Coming Soon")
+
+@bot.callback_query_handler(func=lambda call: call.data == "giftcards_menu")
+def giftcards_status_panel(call):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+    status_label = get_section_status_label("gift_cards")
+    bot.edit_message_text(f"🎁 Gift Cards\n\n<b>Status:</b> {status_label}", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+# --- Status Manage (Owner only, all sections) ---
+@bot.callback_query_handler(func=lambda call: call.data == "status_manage")
+def status_manage_panel(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Only the owner can access this.", show_alert=True)
+        return
+    markup = types.InlineKeyboardMarkup()
+    for section_key, section_label in SECTION_KEYS:
+        status_label = get_section_status_label(section_key)
+        markup.add(types.InlineKeyboardButton(f"{section_label}: {status_label}", callback_data=f"set_status_{section_key}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+    bot.edit_message_text("<b>Status Manage</b>\n\nSelect a section to update its status:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+# Owner selects section to set status
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_status_"))
+def set_section_status_panel(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Only the owner can access this.", show_alert=True)
+        return
+    section_key = call.data.replace("set_status_", "")
+    markup = types.InlineKeyboardMarkup()
+    for status_key, status_label in SECTION_STATUS_OPTIONS:
+        markup.add(types.InlineKeyboardButton(status_label, callback_data=f"set_section_status_{section_key}_{status_key}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="status_manage"))
+    current_status = get_section_status(section_key)
+    current_label = next((label for k, label in SECTION_STATUS_OPTIONS if k == current_status), "🟡 Coming Soon")
+    section_label = next((lbl for k, lbl in SECTION_KEYS if k == section_key), section_key)
+    bot.edit_message_text(f"<b>Status Manage</b>\n\nSection: {section_label}\nCurrent status: {current_label}\n\nChoose a new status:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+# Owner sets status for section
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_section_status_"))
+def set_section_status_callback(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "❌ Only the owner can access this.", show_alert=True)
+        return
+    parts = call.data.replace("set_section_status_", "").split("_")
+    section_key = parts[0]
+    status_key = parts[1]
+    set_section_status(section_key, status_key)
+    bot.answer_callback_query(call.id, "Section status updated!", show_alert=True)
+    status_manage_panel(call)
+
+
+# Dumps: Show real data
+from database import load_products
+@bot.callback_query_handler(func=lambda call: call.data == "dumps_menu")
+def dumps_menu(call):
+    products = load_products().get("dumps", [])
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    if not products:
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+        bot.edit_message_text("<b>💾 Dumps</b>\n\n<i>No dumps available at the moment.</i>", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        return
+    for idx, item in enumerate(products):
+        name = item.get("name", "Unnamed Dump")
+        price = item.get("price", "?")
+        markup.add(types.InlineKeyboardButton(f"🛒 {name} - ${price}", callback_data=f"dumps_detail_{idx}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+    text = "<b>💾 Dumps</b>\n\nSelect a dump from the list below.\n\nAll dumps are checked and quality guaranteed."
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+# Show dump details professionally
+# Show dump details professionally
+@bot.callback_query_handler(func=lambda call: call.data.startswith("dumps_detail_"))
+def dumps_detail(call):
+    idx = int(call.data.split("_")[-1])
+    products = load_products().get("dumps", [])
+    if idx >= len(products):
+        bot.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
+        return
+    item = products[idx]
+    name = item.get("name", "Unnamed Dump")
+    price = item.get("price", "?")
+    desc = item.get("description", "No description.")
+    text = f"<b>{name}</b>\n\n<b>Price:</b> ${price}\n<b>Description:</b> {desc}\n\nTo purchase, click the button below."
+    markup = types.InlineKeyboardMarkup()
+    # Use a dedicated callback for dumps purchase to avoid long callback data
+    markup.add(types.InlineKeyboardButton("💸 Buy Now", callback_data=f"buy_dump_{idx}"))
+    markup.add(types.InlineKeyboardButton("⬅️ Back to Dumps List", callback_data="dumps_menu"))
+    markup.add(types.InlineKeyboardButton("⬅️ Main Menu", callback_data="main_menu"))
+    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+# Place this handler after bot is defined
+@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_dump_"))
+def buy_dump_callback(call):
+    idx = int(call.data.split("_")[-1])
+    products = load_products().get("dumps", [])
+    if idx >= len(products):
+        bot.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
+        return
+    item = products[idx]
+    price = item.get("price", 0)
+    name = item.get("name", "Unnamed Dump")
+    show_payment_options(bot, call, name, price, item, "dumps_menu")
+
+@bot.callback_query_handler(func=lambda call: call.data == "main_menu")
+def main_menu_callback(call):
+    """Callback to return to the main menu."""
+    send_main_menu(call.message.chat.id, "✅ Welcome back! Please choose an option:", call.message.message_id)
+
+# =================================================================
+# ========================== BOT RUN ================================
+# =================================================================
+
+if __name__ == '__main__':
+    print("🤖 Bot is starting...")
+    init_db()
+
+    # Register all handlers from their respective files
+    register_cc_handlers(bot, user_states)
+    register_bin_handlers(bot)
+    register_payment_handlers(bot)
+    register_other_handlers(bot, user_states)
+
+    print("✅ All handlers registered.")
+    
+    # Create a "Start" button for the admin notification
+    try:
+        bot_username = bot.get_me().username
+        startup_markup = types.InlineKeyboardMarkup()
+        startup_markup.add(types.InlineKeyboardButton("▶️ Start Bot", url=f"https://t.me/{bot_username}?start=admin"))
+        notify_admin(bot, "✅ **Bot is Online!**", markup=startup_markup)
+    except Exception as e:
+        print(f"Could not send startup notification with button: {e}")
+        notify_admin(bot, "✅ **Bot is Online!** (Could not create button)")
+
+
+    while True:
+        try:
+            print("▶️ Starting polling...")
+            bot.infinity_polling(skip_pending=True, timeout=90)
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError, telebot.apihelper.ApiTelegramException) as e:
+            print(f"🔴 Network error: {e}. Retrying in 15 seconds...")
+

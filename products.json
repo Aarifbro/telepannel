@@ -1,0 +1,103 @@
+{
+    "bins": [
+        {
+            "name": "Netflix BIN",
+            "price": 10,
+            "bin": "4567890000000000",
+            "status": "WORKING",
+            "country": "USA",
+            "info": "VISA Credit Traditional",
+            "bank": "CHASE BANK",
+            "description": "For Netflix, Spotify, etc."
+        },
+        {
+            "name": "Prime Video BIN",
+            "price": 12,
+            "bin": "5123450000000000",
+            "status": "WORKING",
+            "country": "UK",
+            "info": "MasterCard Debit",
+            "bank": "BARCLAYS BANK PLC",
+            "description": "For Amazon Prime Video."
+        },
+        {
+            "name": "swiggy",
+            "price": 20,
+            "description": "$20 Netflix US Gift Card."
+        },
+        {
+            "name": "eneba.com",
+            "price": 25,
+            "description": "eneba Gift Card Bin."
+        }
+    ],
+    "ready_ccs": [
+        {
+            "name": "CC for Playstore",
+            "price": 25,
+            "description": "Guaranteed working for Google Play Store."
+        },
+        {
+            "name": "CC for Amazon",
+            "price": 35,
+            "description": "High balance CC for Amazon purchases."
+        }
+    ],
+    "gift_cards": [
+        {
+            "name": "Amazon Gift Card",
+            "price": 50,
+            "description": "$50 Amazon US Gift Card."
+        },
+        {
+            "name": "iTunes Gift Card",
+            "price": 25,
+            "description": "$25 iTunes US Gift Card."
+        }
+    ],
+    "rdp": [
+        {
+            "name": "Basic RDP (1 Month)",
+            "price": 15,
+            "description": "Standard RDP for basic tasks."
+        }
+    ],
+    "methods": [
+        {
+            "name": "PayPal Method",
+            "price": 40,
+            "description": "Latest PayPal cashing out method."
+        }
+    ],
+    "other": [
+        {
+            "name": "Premium Account Login",
+            "price": 10,
+            "description": "Login for a random premium service."
+        }
+    ],
+    "dumps": [
+        {
+            "name": "USA Fullz Dump",
+            "price": 120,
+            "description": "High quality USA dump with full info. Format: Track1|Track2|DOB|SSN|Address. Guaranteed fresh."
+        },
+        {
+            "name": "EU Platinum Dump",
+            "price": 150,
+            "description": "Premium EU dump, platinum card, full details included."
+        }
+    ],
+    "phishing_kits": [
+        {
+            "name": "Office365 Phishing Kit",
+            "price": 80,
+            "description": "Premium Office365 phishing kit with admin panel, logs, and bypass features. Easy deploy."
+        },
+        {
+            "name": "Bank Login Phishing Kit",
+            "price": 100,
+            "description": "Advanced bank phishing kit, multi-factor bypass, real-time logs, mobile ready."
+        }
+    ]
+}
