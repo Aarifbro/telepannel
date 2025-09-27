@@ -83,14 +83,14 @@ def send_main_menu(chat_id, text, message_id=None):
     """Sends the main menu with dynamic admin/owner panel buttons."""
     bot.send_chat_action(chat_id, 'typing')
     markup = types.InlineKeyboardMarkup(row_width=2)
-    # Standard menu buttons with new emojis and Personal Area
+    # Standard menu buttons with only supported emojis and Personal Area
     markup.add(
-        types.InlineKeyboardButton("� Personal Area", callback_data="personal_area"),
+        types.InlineKeyboardButton("👤 Personal Area", callback_data="personal_area"),
         types.InlineKeyboardButton("💳 Cards", callback_data="cc_menu"),
-        types.InlineKeyboardButton("�️ BINs", callback_data="bin_menu"),
+        types.InlineKeyboardButton("📦 BINs", callback_data="bin_menu"),
         types.InlineKeyboardButton("🎁 Gift Cards", callback_data="giftcards_menu"),
         types.InlineKeyboardButton("💾 Dumps", callback_data="dumps_menu"),
-        types.InlineKeyboardButton("�️‍♂️ Hacks", callback_data="hacks_menu"),
+        types.InlineKeyboardButton("🕵️ Hacks", callback_data="hacks_menu"),
         types.InlineKeyboardButton("🖥️ RDP", callback_data="rdp_menu"),
         types.InlineKeyboardButton("📚 Methods", callback_data="method_menu"),
         types.InlineKeyboardButton("✨ Other", callback_data="other_menu"),
@@ -308,7 +308,7 @@ def start_command(message):
 
     add_user(user_id, username, referrer_code)
 
-    intro_text = "✨🛍️ <b>𝓦𝓮𝓵𝓬𝓸𝓶𝓮 𝓽𝓸 𝓟𝓻𝓮𝓶𝓲𝓾𝓶 𝓢𝓱𝓸𝓹 𝓑𝓸𝓽!</b> 🛍️✨\n\n<em>Your one-stop shop for digital goods, deals, and more!</em>\n\n👇 <b>𝑺𝒆𝒍𝒆𝒄𝒕 𝒂 𝒄𝒂𝒕𝒆𝒈𝒐𝒓𝒚 𝒃𝒆𝒍𝒐𝒘 𝒕𝒐 𝒈𝒆𝒕 𝒔𝒕𝒂𝒓𝒕𝒆𝒅</b> 👇"
+    intro_text = "<b>🎉 Welcome to the Premium Shop Bot!</b>\n\n<em>Your one-stop shop for digital goods, deals, and more!</em>\n\n👇 <b>Please choose an option from the menu to begin.</b> 👇"
 
     if not check_force_join(bot, user_id):
         from config import FORCE_CHANNEL_LINKS
@@ -463,13 +463,18 @@ if __name__ == '__main__':
         print(f"Could not send startup notification with button: {e}")
         notify_admin(bot, "✅ **Main Bot is Online!** (Could not create button)")
 
-    # Start mirror bot in a separate thread
+    # Start mirror bot in a separate thread with clear logging
     import threading
     def run_mirror():
         print("🤖 Mirror bot is starting...")
-        register_all_handlers(mirror_bot)
-        print("✅ Mirror bot handlers registered.")
-        mirror_bot.infinity_polling(skip_pending=True, timeout=90)
+        try:
+            register_all_handlers(mirror_bot)
+            print("✅ Mirror bot handlers registered.")
+            mirror_username = mirror_bot.get_me().username
+            print(f"Mirror bot username: @{mirror_username}")
+            mirror_bot.infinity_polling(skip_pending=True, timeout=90)
+        except Exception as e:
+            print(f"❌ Mirror bot failed to start: {e}")
 
     threading.Thread(target=run_mirror, daemon=True).start()
 
