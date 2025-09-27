@@ -403,7 +403,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         text = (
             f"Please send the new item details for the **{CATEGORY_NAMES[category]}** category in JSON format.\n\n"
             "**Required keys:** `name`, `price`, `description`.\n"
-            "For **BINs**, you must also include: `bin`, `status`, `country`, `info`, `bank`.\n\n"
+            "For **BINs**, you may also include: `bin`, `status`, `country`, `info`, `bank`.\n\n"
             "Example for a Gift Card:\n"
             "```json\n"
             "{\n"
@@ -411,7 +411,21 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             '  "price": 20,\n'
             '  "description": "$20 Netflix US Gift Card."\n'
             "}\n"
-            "```"
+            "```\n\n"
+            "Example for a BIN (all fields):\n"
+            "```json\n"
+            "{\n"
+            '  "name": "Netflix BIN",\n'
+            '  "price": 10,\n'
+            '  "description": "For Netflix, Spotify, etc.",\n'
+            '  "bin": "4567890000000000",\n'
+            '  "status": "WORKING",\n'
+            '  "country": "USA",\n'
+            '  "info": "VISA Credit Traditional",\n'
+            '  "bank": "CHASE BANK"\n'
+            "}\n"
+            "```\n\n"
+            "You can omit any BIN-specific field and it will default to 'N/A'."
         )
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
