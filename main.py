@@ -46,7 +46,7 @@ import requests
 from telebot import types
 
 # Import functions from handler files
-from config import API_TOKEN, ADMIN_ID
+from config import API_TOKEN, API_TOKEN_2, ADMIN_ID
 from database import init_db, add_user
 from helpers import check_force_join, notify_admin
 from cc_handler import register_cc_handlers
@@ -54,8 +54,19 @@ from bin_handler import register_bin_handlers
 from payment_handler import register_payment_handlers
 from other_handlers import register_other_handlers
 
-# Initialize the bot
+
+# Initialize the main bot
 bot = telebot.TeleBot(API_TOKEN)
+
+# Initialize the mirror bot
+mirror_bot = telebot.TeleBot(API_TOKEN_2)
+
+# Register all handlers for the mirror bot (reuse the same handlers)
+def register_all_handlers(bot_instance):
+    register_cc_handlers(bot_instance, user_states)
+    register_bin_handlers(bot_instance)
+    register_payment_handlers(bot_instance)
+    register_other_handlers(bot_instance, user_states)
 
 # Dictionary to track user states (e.g., awaiting input for admin panel)
 user_states = {}
@@ -297,7 +308,7 @@ def start_command(message):
 
     add_user(user_id, username, referrer_code)
 
-    intro_text = "<b>🎉 Welcome to the Premium Shop Bot!</b>\n\nYour one-stop shop for digital goods."
+    intro_text = "✨🛍️ <b>𝓦𝓮𝓵𝓬𝓸𝓶𝓮 𝓽𝓸 𝓟𝓻𝓮𝓶𝓲𝓾𝓶 𝓢𝓱𝓸𝓹 𝓑𝓸𝓽!</b> 🛍️✨\n\n<em>Your one-stop shop for digital goods, deals, and more!</em>\n\n👇 <b>𝑺𝒆𝒍𝒆𝒄𝒕 𝒂 𝒄𝒂𝒕𝒆𝒈𝒐𝒓𝒚 𝒃𝒆𝒍𝒐𝒘 𝒕𝒐 𝒈𝒆𝒕 𝒔𝒕𝒂𝒓𝒕𝒆𝒅</b> 👇"
 
     if not check_force_join(bot, user_id):
         from config import FORCE_CHANNEL_LINKS
@@ -309,7 +320,7 @@ def start_command(message):
         force_join_text = f"{intro_text}\n\n⚠️ To get full access, you must first join all our partner channels/groups."
         bot.send_message(user_id, force_join_text, reply_markup=markup, parse_mode="HTML")
     else:
-        send_main_menu(user_id, intro_text + "\n\n👇 <b>Please choose an option from the menu to begin.</b>",)
+        send_main_menu(user_id, intro_text,)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_join")
 def joined_callback(call):
@@ -439,31 +450,32 @@ def main_menu_callback(call):
 # =================================================================
 
 if __name__ == '__main__':
-    print("🤖 Bot is starting...")
+    print("🤖 Main bot is starting...")
     init_db()
-
-    # Register all handlers from their respective files
-    register_cc_handlers(bot, user_states)
-    register_bin_handlers(bot)
-    register_payment_handlers(bot)
-    register_other_handlers(bot, user_states)
-
-    print("✅ All handlers registered.")
-    
-    # Create a "Start" button for the admin notification
+    register_all_handlers(bot)
+    print("✅ Main bot handlers registered.")
     try:
         bot_username = bot.get_me().username
         startup_markup = types.InlineKeyboardMarkup()
         startup_markup.add(types.InlineKeyboardButton("▶️ Start Bot", url=f"https://t.me/{bot_username}?start=admin"))
-        notify_admin(bot, "✅ **Bot is Online!**", markup=startup_markup)
+        notify_admin(bot, "✅ **Main Bot is Online!**", markup=startup_markup)
     except Exception as e:
         print(f"Could not send startup notification with button: {e}")
-        notify_admin(bot, "✅ **Bot is Online!** (Could not create button)")
+        notify_admin(bot, "✅ **Main Bot is Online!** (Could not create button)")
 
+    # Start mirror bot in a separate thread
+    import threading
+    def run_mirror():
+        print("🤖 Mirror bot is starting...")
+        register_all_handlers(mirror_bot)
+        print("✅ Mirror bot handlers registered.")
+        mirror_bot.infinity_polling(skip_pending=True, timeout=90)
+
+    threading.Thread(target=run_mirror, daemon=True).start()
 
     while True:
         try:
-            print("▶️ Starting polling...")
+            print("▶️ Starting polling for main bot...")
             bot.infinity_polling(skip_pending=True, timeout=90)
         except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError, telebot.apihelper.ApiTelegramException) as e:
             print(f"🔴 Network error: {e}. Retrying in 15 seconds...")
