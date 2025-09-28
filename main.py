@@ -417,7 +417,14 @@ def run_bot(bot_instance, name):
 if __name__ == '__main__':
     print("🤖 Starting bots...")
     init_db()
-    bots = [telebot.TeleBot(token) for token in API_TOKENS]
+    # Optimize HTTP session reuse
+    try:
+        telebot.apihelper.SESSION_TIME_TO_LIVE = 15
+    except Exception:
+        pass
+
+    # Create bot instances with a larger thread pool for faster handler processing
+    bots = [telebot.TeleBot(token, num_threads=8) for token in API_TOKENS]
     for idx, b in enumerate(bots, start=1):
         register_all_handlers(b)
         try:
