@@ -1,7 +1,8 @@
 # --- Telegram Bot Configuration ---
-API_TOKEN = "7595637986:AAGJj6AftCmDTg6pr2E1K-W0Kt05qM4SkEE"
-# Add a second bot token for multi-bot support
-API_TOKEN_2 = "8406593328:AAGOEBB2hx7Mf-RExahrY3GO9Md_UiVjwI4"  # Replace with your second bot token
+API_TOKENS = [
+    "8406593328:AAGOEBB2hx7Mf-RExahrY3GO9Md_UiVjwI4",
+    "7595637986:AAGJj6AftCmDTg6pr2E1K-W0Kt05qM4SkEE"
+]
 ADMIN_ID = 1513264586 # Enter your numeric user ID
 
 # --- Manual Payment Configuration ---
