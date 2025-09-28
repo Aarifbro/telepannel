@@ -109,6 +109,16 @@ def init_db():
                 item_details TEXT
             )
         ''')
+
+        # Create a table to record giveaway winner selections (optional but useful for audit)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS giveaway_winners (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                selected_by INTEGER NOT NULL,
+                selected_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         conn.commit()
 
 def get_user_details(user_id):

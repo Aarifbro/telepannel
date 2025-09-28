@@ -309,12 +309,119 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                 types.InlineKeyboardButton("📦 Manage Products", callback_data="admin_manage_products"),
                 types.InlineKeyboardButton("📊 Manage Orders", callback_data="admin_orders"),
                 types.InlineKeyboardButton("👥 View Users", callback_data="admin_users"),
-                types.InlineKeyboardButton("🔎 User Lookup", callback_data="admin_user_lookup")
+                types.InlineKeyboardButton("🔎 User Lookup", callback_data="admin_user_lookup"),
+                types.InlineKeyboardButton("🏆 Top Referrers", callback_data="admin_top_referrers"),
+                types.InlineKeyboardButton("🎁 Giveaway (Select Winner)", callback_data="admin_giveaway")
             )
         for section in section_admin_sections:
             markup.add(types.InlineKeyboardButton(f"� Manage {section.title()} Orders", callback_data=f"admin_orders_{section}"))
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         bot.edit_message_text("🔐 **Admin Panel**\n\nHere you can manage products, view recent orders, see user statistics, and look up user purchase/payment history. Section admins see only their assigned section's orders.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    # =============================
+    # ===== REFERRAL GIVEAWAYS =====
+    # =============================
+
+    def format_user_line(u):
+        uid, uname, ref_count, join_date = u
+        uname_disp = uname if uname else "-"
+        return f"<code>{uid}</code> | {uname_disp} | <b>{ref_count}</b> | <code>{join_date[:10]}</code>"
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_top_referrers" or call.data.startswith("admin_top_referrers_page_"))
+    def admin_top_referrers(call):
+        if call.from_user.id != ADMIN_ID:
+            # Allow global admins as well
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if c.fetchone() is None:
+                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+                    return
+        import math
+        page = 0
+        if call.data.startswith("admin_top_referrers_page_"):
+            page = int(call.data.split('_')[-1])
+        page_size = 10
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users WHERE referral_count > 0")
+            count = cursor.fetchone()[0]
+            cursor.execute("SELECT user_id, username, referral_count, join_date FROM users WHERE referral_count > 0 ORDER BY referral_count DESC, join_date ASC LIMIT ? OFFSET ?", (page_size, page*page_size))
+            rows = cursor.fetchall()
+        total_pages = max(1, math.ceil(count / page_size))
+        text = f"<b>🏆 Top Referrers (Page {page+1}/{total_pages})</b>\nTotal with >=1 referral: <b>{count}</b>\n\n<b>ID</b> | <b>Username</b> | <b>Refs</b> | <b>Joined</b>\n" + ("-"*40) + "\n"
+        if not rows:
+            text += "No users with successful referrals yet."
+        else:
+            for u in rows:
+                text += format_user_line(u) + "\n"
+        markup = types.InlineKeyboardMarkup()
+        nav = []
+        if page > 0:
+            nav.append(types.InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_top_referrers_page_{page-1}"))
+        if page < total_pages-1:
+            nav.append(types.InlineKeyboardButton("Next ➡️", callback_data=f"admin_top_referrers_page_{page+1}"))
+        if nav:
+            markup.row(*nav)
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_giveaway")
+    def admin_giveaway_menu(call):
+        # Owner or global admin only
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if c.fetchone() is None:
+                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+                    return
+        # Show top 20 with actions to select as winner
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id, username, referral_count, join_date FROM users WHERE referral_count > 0 ORDER BY referral_count DESC, join_date ASC LIMIT 20")
+            rows = cursor.fetchall()
+        text = "<b>🎁 Giveaway</b>\n\nPick a winner from recent top referrers (last 20 shown).\n\n<b>ID</b> | <b>User</b> | <b>Refs</b> | <b>Joined</b>\n" + ("-"*40) + "\n"
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        if not rows:
+            text += "No eligible users (referrals >= 1) yet."
+        else:
+            for u in rows:
+                text += format_user_line(u) + "\n"
+                markup.add(types.InlineKeyboardButton(f"Select {u[0]}", callback_data=f"admin_giveaway_select_{u[0]}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_giveaway_select_"))
+    def admin_giveaway_select(call):
+        # Permission check
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if c.fetchone() is None:
+                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+                    return
+        try:
+            uid = int(call.data.split('_')[-1])
+        except Exception:
+            bot.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
+            return
+        # Persist winner to DB and notify
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO giveaway_winners (user_id, selected_by) VALUES (?, ?)", (uid, call.from_user.id))
+            conn.commit()
+            cursor.execute("SELECT username FROM users WHERE user_id = ?", (uid,))
+            row = cursor.fetchone()
+            uname = row[0] if row else None
+        bot.answer_callback_query(call.id, "🎉 Winner recorded!", show_alert=True)
+        winner_name = f"@{uname}" if uname else f"User {uid}"
+        try:
+            bot.send_message(uid, "🎉 Congratulations! You have been selected as a giveaway winner. The team will contact you with your reward.")
+        except Exception:
+            pass
+        bot.edit_message_text(f"🎁 <b>Giveaway Winner Selected:</b> {winner_name} (<code>{uid}</code>)", call.message.chat.id, call.message.message_id, parse_mode="HTML")
 
     # Section-based Manage Orders for section admins
     @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_orders_"))
