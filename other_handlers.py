@@ -109,8 +109,6 @@ def register_other_handlers(bot, user_states):
         except ValueError:
             bot.send_message(message.chat.id, "❌ Invalid User ID. Please send a numeric User ID.")
             return
-        import sqlite3
-        from config import DB_NAME
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
@@ -134,8 +132,6 @@ def register_other_handlers(bot, user_states):
         except ValueError:
             bot.send_message(message.chat.id, "❌ Invalid User ID. Please send a numeric User ID.")
             return
-        import sqlite3
-        from config import DB_NAME
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
@@ -145,8 +141,6 @@ def register_other_handlers(bot, user_states):
 
     @bot.callback_query_handler(func=lambda call: call.data == "owner_list_admins")
     def owner_list_admins(call):
-        import sqlite3
-        from config import DB_NAME
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT user_id, username, added_at FROM admins ORDER BY added_at DESC")
@@ -314,7 +308,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                 types.InlineKeyboardButton("🎁 Giveaway (Select Winner)", callback_data="admin_giveaway")
             )
         for section in section_admin_sections:
-            markup.add(types.InlineKeyboardButton(f"� Manage {section.title()} Orders", callback_data=f"admin_orders_{section}"))
+            markup.add(types.InlineKeyboardButton(f"📦 Manage {section.title()} Orders", callback_data=f"admin_orders_{section}"))
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         bot.edit_message_text("🔐 **Admin Panel**\n\nHere you can manage products, view recent orders, see user statistics, and look up user purchase/payment history. Section admins see only their assigned section's orders.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
@@ -415,6 +409,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             cursor.execute("SELECT username FROM users WHERE user_id = ?", (uid,))
             row = cursor.fetchone()
             uname = row[0] if row else None
+        
         bot.answer_callback_query(call.id, "🎉 Winner recorded!", show_alert=True)
         winner_name = f"@{uname}" if uname else f"User {uid}"
         try:
@@ -460,14 +455,11 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         except ValueError:
             bot.send_message(message.chat.id, "❌ Invalid User ID. Please send a numeric User ID.")
             return
-        from database import get_user_details
         user = get_user_details(user_id_int)
         if not user:
             bot.send_message(message.chat.id, f"❌ No user found with ID {user_id}.")
             return
         # Fetch purchase/payment history
-        import sqlite3
-        from config import DB_NAME
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT order_id, item_name, price_usd, payment_status, creation_date FROM orders WHERE user_id = ? ORDER BY creation_date DESC", (user_id_int,))
@@ -540,39 +532,34 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
     def handle_add_item_message(message):
         admin_id = message.from_user.id
         state = user_states[admin_id]
-        category = state.split('_')[2]
+        category = state.replace("awaiting_json_", "")
         try:
-            new_item_data = json.loads(message.text)
-            # Perform validation to ensure the essential keys are present.
-            if not all(key in new_item_data for key in ["name", "price", "description"]):
-                raise ValueError("The JSON is missing one of the required keys: name, price, description.")
-
-            # For BINs, auto-fill missing BIN-specific fields with defaults
-            if category == "bins":
-                for field in ["bin", "status", "country", "info", "bank"]:
-                    if field not in new_item_data:
-                        new_item_data[field] = "N/A"
-
+            new_item = json.loads(message.text)
+            # Basic validation
+            if not all(k in new_item for k in ["name", "price", "description"]):
+                raise ValueError("Missing required keys: name, price, description.")
+            
             products_data = load_products()
-            products_data[category].append(new_item_data)
+            products_data[category].append(new_item)
             save_products(products_data)
-            bot.send_message(admin_id, f"✅ Item successfully added to the **{CATEGORY_NAMES[category]}** category!")
+            
+            bot.send_message(message.chat.id, f"✅ Successfully added new item to **{CATEGORY_NAMES[category]}**.", parse_mode="Markdown")
+            del user_states[admin_id]
+        except json.JSONDecodeError:
+            bot.send_message(message.chat.id, "❌ Invalid JSON format. Please check your syntax and try again.")
         except Exception as e:
-            bot.send_message(admin_id, f"❌ An error occurred while adding the item: {e}")
-        finally:
-            # Clean up the user's state to prevent accidental triggers.
-            if admin_id in user_states:
-                del user_states[admin_id]
+            bot.send_message(message.chat.id, f"❌ An error occurred: {e}")
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_remove_list_"))
     def remove_item_list_callback(call):
-        category = call.data.split('_')[3]
+        category = call.data.replace("admin_remove_list_", "")
         products_data = load_products()
         items = products_data.get(category, [])
-        if not items:
-            bot.answer_callback_query(call.id, "There are no items in this category to remove.", show_alert=True)
-            return
         
+        if not items:
+            bot.answer_callback_query(call.id, f"No items to remove in {CATEGORY_NAMES[category]}.", show_alert=True)
+            return
+            
         markup = types.InlineKeyboardMarkup(row_width=1)
         for index, item in enumerate(items):
             markup.add(types.InlineKeyboardButton(f"🗑️ {item['name']}", callback_data=f"admin_delete_{category}_{index}"))
@@ -592,7 +579,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                 save_products(products_data)
                 bot.answer_callback_query(call.id, "✅ Item successfully removed.")
                 # Refresh the list of items to show the change immediately.
-                remove_item_list_callback(call) 
+                remove_item_list_callback(call)
             else:
                 raise IndexError("The selected item index is out of range, it might have been deleted already.")
         except Exception as e:
@@ -627,7 +614,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(user_id) FROM users")
             count = cursor.fetchone()[0]
-            cursor.execute("SELECT user_id, username, old_username, join_date, phone_number FROM users ORDER BY join_date DESC LIMIT ? OFFSET ?", (page_size, page*page_size))
+            cursor.execute("SELECT user_id, username, join_date, phone_number, referral_count FROM users ORDER BY join_date DESC LIMIT ? OFFSET ?", (page_size, page*page_size))
             users = cursor.fetchall()
         total_pages = math.ceil(count / page_size)
         text = f"<b>👥 Registered Users (Page {page+1}/{total_pages})</b>\nTotal: <b>{count}</b>\n\n"
@@ -635,7 +622,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             text += "No users found."
         else:
             for u in users:
-                text += f"<b>ID:</b> <code>{u[0]}</code> | <b>Name:</b> {u[1]} | <b>Old Name:</b> {u[2] or '-'} | <b>Reg:</b> {u[3][:10]} | <b>Phone:</b> {u[4] or '-'}\n"
+                text += f"<b>ID:</b> <code>{u[0]}</code> | <b>Name:</b> {u[1]} | <b>Refs:</b> {u[4]} | <b>Reg:</b> {u[2][:10]}\n"
         markup = types.InlineKeyboardMarkup()
         nav_buttons = []
         if page > 0:

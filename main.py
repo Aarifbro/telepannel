@@ -71,7 +71,6 @@ def register_all_handlers(bot_instance):
         bot_instance.send_chat_action(chat_id, 'typing')
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("👤 Personal Area", callback_data="personal_area"),
             types.InlineKeyboardButton("💳 Cards", callback_data="cc_menu"),
             types.InlineKeyboardButton("📦 BINs", callback_data="bin_menu"),
             types.InlineKeyboardButton("🎁 Gift Cards", callback_data="giftcards_menu"),
@@ -80,8 +79,11 @@ def register_all_handlers(bot_instance):
             types.InlineKeyboardButton("🖥️ RDP", callback_data="rdp_menu"),
             types.InlineKeyboardButton("📚 Methods", callback_data="method_menu"),
             types.InlineKeyboardButton("✨ Other", callback_data="other_menu"),
-            types.InlineKeyboardButton("🆘 Help", callback_data="support")
+            types.InlineKeyboardButton("👤 Personal Area", callback_data="personal_area"),
+            types.InlineKeyboardButton("🆘 Support", callback_data="support"),
+            types.InlineKeyboardButton("📜 Rules", callback_data="rules")
         )
+        
         is_owner = chat_id == ADMIN_ID
         is_global_admin = False
         is_section_admin = False
@@ -95,17 +97,16 @@ def register_all_handlers(bot_instance):
                     is_section_admin = cursor.fetchone() is not None
         except Exception:
             pass
+
         if is_owner:
             markup.add(types.InlineKeyboardButton("🛠️ Status Manage", callback_data="status_manage"))
             markup.add(
                 types.InlineKeyboardButton("👑 Owner Panel", callback_data="owner_panel"),
-                types.InlineKeyboardButton("📦 Manage Orders", callback_data="manage_orders_panel")
+                types.InlineKeyboardButton("🔐 Admin Panel", callback_data="admin_panel")
             )
-        elif is_global_admin:
+        elif is_global_admin or is_section_admin:
             markup.add(types.InlineKeyboardButton("🔐 Admin Panel", callback_data="admin_panel"))
-            markup.add(types.InlineKeyboardButton("📦 Manage Orders", callback_data="manage_orders_panel"))
-        elif is_section_admin:
-            markup.add(types.InlineKeyboardButton("📦 Manage Orders", callback_data="manage_orders_panel"))
+
         try:
             if message_id:
                 bot_instance.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode="Markdown")
@@ -113,6 +114,37 @@ def register_all_handlers(bot_instance):
                 bot_instance.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
         except Exception:
             pass
+
+    @bot_instance.message_handler(commands=["start"])
+    def start_command(message):
+        user_id = message.from_user.id
+        username = message.from_user.username or message.from_user.first_name
+        parts = message.text.split()
+        referrer_code = parts[1] if len(parts) > 1 else None
+        add_user(user_id, username, referrer_code)
+        intro_text = (
+            "💘💥  ฬ𝔀𝓮𝓵𝓬𝓸𝓶𝓮 𝓽𝓸 𝓽𝓱𝓮 𝓟𝓻𝓮𝓶𝓲𝓾𝓶 𝓢𝓱𝓸𝓹  💜👑\n"
+            "𝓟𝓵𝓮𝓪𝓼𝓮 𝓬𝓱𝓸𝓸𝓼𝓮 𝓪𝓷 𝓸𝓹𝓽𝓲𝓸𝓷 𝓯𝓻𝓸𝓶 𝓽𝓱𝓮 𝓶𝓮𝓷𝓾 𝓽𝓸 𝓫𝓮𝓰𝓲𝓷\n \n"
+            "👇\n 𝓟𝓵𝓮𝓪𝓼𝓮 𝓬𝓱𝓸𝓸𝓼𝓮 𝓪𝓷 𝓸𝓹𝓽𝓲𝓸𝓷 𝓯𝓻𝓸𝓶 𝓽𝓱𝓮 𝓶𝓮𝓷𝓾 𝓽𝓸 𝓫𝓮𝓰𝓲𝓷\n\n👇"
+        )
+        if not check_force_join(bot_instance, user_id):
+            from config import FORCE_CHANNEL_LINKS
+            markup = types.InlineKeyboardMarkup()
+            for link in FORCE_CHANNEL_LINKS:
+                markup.add(types.InlineKeyboardButton("🔗 Join Channel/Group", url=link))
+            markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
+            force_join_text = f"{intro_text}\n\n⚠️ To get full access, you must first join all our partner channels/groups."
+            bot_instance.send_message(user_id, force_join_text, reply_markup=markup, parse_mode="HTML")
+        else:
+            send_main_menu(user_id, intro_text)
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "check_join")
+    def joined_callback(call):
+        if check_force_join(bot_instance, call.from_user.id):
+            bot_instance.delete_message(call.message.chat.id, call.message.message_id)
+            send_main_menu(call.message.chat.id, "✅𝕿𝖍𝖆𝖓𝖐 𝖞𝖔𝖚 𝖋𝖔𝖗 𝖏𝖔𝖎𝖓𝖎𝖓𝖌! 𝖄𝖔𝖚 𝖈𝖆𝖓 𝖓𝖔𝖜 𝖚𝖘𝖊 𝖙𝖍𝖊 𝖇𝖔𝖙")
+        else:
+            bot_instance.answer_callback_query(call.id, "❌ You haven't joined the channel yet.", show_alert=True)
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "manage_orders_panel")
     def manage_orders_panel(call):
@@ -206,100 +238,7 @@ def register_all_handlers(bot_instance):
         item = products[idx]
         price = item.get("price", 0)
         name = item.get("name", "Unnamed Kit")
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("➡️ Proceed to Payment", callback_data=f"proceed_payment_{idx}"))
-        markup.add(types.InlineKeyboardButton("📸 Send Payment Screenshot", callback_data=f"send_ss_{idx}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Kits", callback_data="phishing_kits_menu"))
-        bot_instance.edit_message_text(f"<b>{name}</b>\n\n<b>Price:</b> ${price}\n\nChoose a payment option:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    # Handler for Proceed to Payment (original flow)
-    @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("proceed_payment_"))
-    def proceed_payment(call):
-        idx = int(call.data.split("_")[-1])
-        products = load_products().get("phishing_kits", [])
-        if idx >= len(products):
-            bot_instance.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
-            return
-        item = products[idx]
-        price = item.get("price", 0)
-        name = item.get("name", "Unnamed Kit")
         show_payment_options(bot_instance, call, name, price, item, "phishing_kits_menu")
-
-    # Handler for Send Payment Screenshot
-    @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("send_ss_"))
-    def send_payment_screenshot_prompt(call):
-        idx = int(call.data.split("_")[-1])
-        products = load_products().get("phishing_kits", [])
-        if idx >= len(products):
-            bot_instance.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
-            return
-        user_states[call.from_user.id] = f"awaiting_ss_{idx}"
-        bot_instance.send_message(call.from_user.id, "📸 Please upload your payment screenshot now.")
-
-    # Handler to receive screenshot and confirm payment
-    @bot_instance.message_handler(content_types=['photo'])
-    def receive_payment_screenshot(message):
-        state = user_states.get(message.from_user.id, "")
-        if state.startswith("awaiting_ss_"):
-            idx = int(state.split("_")[-1])
-            products = load_products().get("phishing_kits", [])
-            if idx >= len(products):
-                bot_instance.send_message(message.chat.id, "Invalid product selection.")
-                return
-            file_id = message.photo[-1].file_id
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("✅ Confirm Payment", callback_data=f"confirm_ss_{idx}_{file_id}"))
-            markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="main_menu"))
-            bot_instance.send_message(message.chat.id, "Screenshot received! Now confirm your payment:", reply_markup=markup)
-            del user_states[message.from_user.id]
-
-    # Handler for Confirm Payment after screenshot
-    @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("confirm_ss_"))
-    def confirm_payment_screenshot(call):
-        parts = call.data.split("_")
-        idx = int(parts[2])
-        file_id = parts[3]
-        products = load_products().get("phishing_kits", [])
-        if idx >= len(products):
-            bot_instance.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
-            return
-        try:
-            bot_instance.send_message(ADMIN_ID, f"User {call.from_user.id} submitted a payment screenshot for {products[idx].get('name','?')}.")
-            bot_instance.send_photo(ADMIN_ID, file_id, caption=f"Payment screenshot from user {call.from_user.id} for {products[idx].get('name','?')}")
-        except Exception:
-            pass
-        bot_instance.answer_callback_query(call.id, "Payment confirmation sent! Await admin approval.", show_alert=True)
-
-    @bot_instance.message_handler(commands=["start"])
-    def start_command(message):
-        user_id = message.from_user.id
-        username = message.from_user.username or message.from_user.first_name
-        parts = message.text.split()
-        referrer_code = parts[1] if len(parts) > 1 else None
-        add_user(user_id, username, referrer_code)
-        intro_text = (
-            "💘💥  ฬ𝔀𝓮𝓵𝓬𝓸𝓶𝓮 𝓽𝓸 𝓽𝓱𝓮 𝓟𝓻𝓮𝓶𝓲𝓾𝓶 𝓢𝓱𝓸𝓹  💜👑\n"
-            "𝓟𝓵𝓮𝓪𝓼𝓮 𝓬𝓱𝓸𝓸𝓼𝓮 𝓪𝓷 𝓸𝓹𝓽𝓲𝓸𝓷 𝓯𝓻𝓸𝓶 𝓽𝓱𝓮 𝓶𝓮𝓷𝓾 𝓽𝓸 𝓫𝓮𝓰𝓲𝓷\n \n"
-            "👇 𝓟𝓵𝓮𝓪𝓼𝓮 𝓬𝓱𝓸𝓸𝓼𝓮 𝓪𝓷 𝓸𝓹𝓽𝓲𝓸𝓷 𝓯𝓻𝓸𝓶 𝓽𝓱𝓮 𝓶𝓮𝓷𝓾 𝓽𝓸 𝓫𝓮𝓰𝓲𝓷\n\n👇"
-        )
-        if not check_force_join(bot_instance, user_id):
-            from config import FORCE_CHANNEL_LINKS
-            markup = types.InlineKeyboardMarkup()
-            for link in FORCE_CHANNEL_LINKS:
-                markup.add(types.InlineKeyboardButton("🔗 Join Channel/Group", url=link))
-            markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
-            force_join_text = f"{intro_text}\n\n⚠️ To get full access, you must first join all our partner channels/groups."
-            bot_instance.send_message(user_id, force_join_text, reply_markup=markup, parse_mode="HTML")
-        else:
-            send_main_menu(user_id, intro_text)
-
-    @bot_instance.callback_query_handler(func=lambda call: call.data == "check_join")
-    def joined_callback(call):
-        if check_force_join(bot_instance, call.from_user.id):
-            bot_instance.delete_message(call.message.chat.id, call.message.message_id)
-            send_main_menu(call.message.chat.id, "✅𝕿𝖍𝖆𝖓𝖐 𝖞𝖔𝖚 𝖋𝖔𝖗 𝖏𝖔𝖎𝖓𝖎𝖓𝖌! 𝖄𝖔𝖚 𝖈𝖆𝖓 𝖓𝖔𝖜 𝖚𝖘𝖊 𝖙𝖍𝖊 𝖇𝖔𝖙")
-        else:
-            bot_instance.answer_callback_query(call.id, "❌ You haven't joined the channel yet.", show_alert=True)
 
     # Section status helpers and panels
     def get_section_status_label(section_key):
@@ -308,10 +247,15 @@ def register_all_handlers(bot_instance):
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "giftcards_menu")
     def giftcards_status_panel(call):
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
-        status_label = get_section_status_label("gift_cards")
-        bot_instance.edit_message_text(f"🎁 Gift Cards\n\n<b>Status:</b> {status_label}", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        status_key = get_section_status("gift_cards")
+        if status_key == "available":
+            from other_handlers import create_dynamic_product_menu
+            create_dynamic_product_menu(call, "gift_cards")
+        else:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+            status_label = get_section_status_label("gift_cards")
+            bot_instance.edit_message_text(f"🎁 Gift Cards\n\n<b>Status:</b> {status_label}", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "status_manage")
     def status_manage_panel(call):
@@ -347,7 +291,7 @@ def register_all_handlers(bot_instance):
             return
         parts = call.data.replace("set_section_status_", "").split("_")
         section_key = parts[0]
-        status_key = parts[1]
+        status_key = "_".join(parts[1:])
         set_section_status(section_key, status_key)
         bot_instance.answer_callback_query(call.id, "Section status updated!", show_alert=True)
         status_manage_panel(call)
@@ -412,6 +356,9 @@ def run_bot(bot_instance, name):
         except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError, telebot.apihelper.ApiTelegramException) as e:
             print(f"🔴 Network error in {name}: {e}. Retrying in 15 seconds...")
             time.sleep(15)
+        except Exception as e:
+            print(f"An unexpected error occurred in {name}: {e}. Retrying in 30 seconds...")
+            time.sleep(30)
 
 
 if __name__ == '__main__':

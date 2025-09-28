@@ -1,32 +1,3 @@
-def add_user(user_id, username, referrer_code=None):
-    """
-    Adds a new user to the database or updates their username if they already exist.
-    This function also handles the referral logic.
-    """
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-        existing_user = cursor.fetchone()
-        is_new_user = not existing_user
-        if is_new_user:
-            referral_code = generate_referral_code(user_id)
-            referrer_id = None
-            if referrer_code:
-                cursor.execute("SELECT user_id FROM users WHERE referral_code = ?", (referrer_code,))
-                referrer_result = cursor.fetchone()
-                if referrer_result:
-                    referrer_id = referrer_result[0]
-                    cursor.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = ?", (referrer_id,))
-            cursor.execute(
-                "INSERT INTO users (user_id, username, join_date, referral_code, referred_by, referral_count) VALUES (?, ?, ?, ?, ?, ?)",
-                (user_id, username, datetime.now(UTC).isoformat(), referral_code, referrer_id, 0)
-            )
-        else:
-            cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
-        conn.commit()
-def generate_referral_code(user_id):
-    """Generates a simple and unique referral code for a user."""
-    return f"ref{user_id}"
 import sqlite3
 import json
 from datetime import datetime, UTC
@@ -69,32 +40,24 @@ def init_db():
         if 'username' not in columns:
             print("Updating database schema: Adding 'username' column...")
             cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
-
-        # Check for and add the 'referral_code' column with a unique index
+        
         if 'referral_code' not in columns:
-            print("Updating database schema: Adding 'referral_code' column...")
-            # Step 1: Add the column without the UNIQUE constraint first
             cursor.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
-
-            print("Generating referral codes for existing users...")
-            # Step 2: Generate and update unique codes for all existing users
-            cursor.execute("SELECT user_id FROM users WHERE referral_code IS NULL")
-            users_to_update = cursor.fetchall()
-            for user in users_to_update:
-                user_id = user[0]
-                ref_code = generate_referral_code(user_id)
-                cursor.execute("UPDATE users SET referral_code = ? WHERE user_id = ?", (ref_code, user_id))
-
-            print("Creating UNIQUE index on referral_code column...")
-            # Step 3: Now, create a UNIQUE index on the column
-            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_code ON users(referral_code)")
-
         if 'referred_by' not in columns:
-            print("Updating database schema: Adding 'referred_by' column...")
             cursor.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
         if 'referral_count' not in columns:
-            print("Updating database schema: Adding 'referral_count' column...")
             cursor.execute("ALTER TABLE users ADD COLUMN referral_count INTEGER DEFAULT 0")
+
+        # Create the giveaway winners table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS giveaway_winners (
+                winner_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                selected_by INTEGER NOT NULL,
+                selected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        ''')
 
         # Create the orders table
         cursor.execute('''
@@ -109,33 +72,62 @@ def init_db():
                 item_details TEXT
             )
         ''')
+        conn.commit()
 
-        # Create a table to record giveaway winner selections (optional but useful for audit)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS giveaway_winners (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                selected_by INTEGER NOT NULL,
-                selected_at TEXT DEFAULT CURRENT_TIMESTAMP
+def add_user(user_id, username, referrer_code=None):
+    """
+    Adds a new user to the database or updates their username if they already exist.
+    Handles referral logic if a referrer_code is provided.
+    """
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, referral_code FROM users WHERE user_id = ?", (user_id,))
+        existing_user = cursor.fetchone()
+        is_new_user = not existing_user
+
+        if is_new_user:
+            import uuid
+            new_referral_code = str(uuid.uuid4())[:8]
+            referred_by_id = None
+            if referrer_code:
+                cursor.execute("SELECT user_id FROM users WHERE referral_code = ?", (referrer_code,))
+                referrer = cursor.fetchone()
+                if referrer:
+                    referred_by_id = referrer[0]
+            
+            cursor.execute(
+                "INSERT INTO users (user_id, username, join_date, referral_code, referred_by) VALUES (?, ?, ?, ?, ?)",
+                (user_id, username, datetime.now(UTC).isoformat(), new_referral_code, referred_by_id)
             )
-        ''')
+            
+            if referred_by_id:
+                cursor.execute("UPDATE users SET referral_count = referral_count + 1 WHERE user_id = ?", (referred_by_id,))
+        else:
+            # Ensure existing users have a referral code
+            if not existing_user[1]:
+                import uuid
+                new_referral_code = str(uuid.uuid4())[:8]
+                cursor.execute("UPDATE users SET username = ?, referral_code = ? WHERE user_id = ?", (username, new_referral_code, user_id))
+            else:
+                cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
         conn.commit()
 
 def get_user_details(user_id):
     """
-    Fetches all necessary details for a user for the 'Personal Area'.
+    Fetches all necessary details for a user.
     """
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, referral_code, referral_count FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT user_id, username, join_date, referral_code, referral_count FROM users WHERE user_id = ?", (user_id,))
         user = cursor.fetchone()
         if user:
             # Return the data in a clean dictionary format
             return {
                 "user_id": user[0],
                 "username": user[1],
-                "referral_code": user[2],
-                "referral_count": user[3]
+                "join_date": user[2],
+                "referral_code": user[3],
+                "referral_count": user[4]
             }
         return None
 

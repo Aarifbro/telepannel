@@ -1,6 +1,5 @@
 # --- Telegram Bot Configuration ---
 API_TOKENS = [
-    "8406593328:AAGOEBB2hx7Mf-RExahrY3GO9Md_UiVjwI4",
     "7595637986:AAGJj6AftCmDTg6pr2E1K-W0Kt05qM4SkEE"
 ]
 ADMIN_ID = 1513264586 # Enter your numeric user ID
