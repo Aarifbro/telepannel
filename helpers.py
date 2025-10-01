@@ -1,5 +1,8 @@
+import os
+import json
 import random
-from config import FORCE_CHANNEL_IDS, ADMIN_ID
+from typing import Dict, List
+from config import FORCE_CHANNEL_IDS, ADMIN_ID, WELCOME_GIF, SUCCESS_GIF, REJECT_GIF, PENDING_GIF, USE_GIF_URL_FALLBACK
 
 def check_force_join(bot, user_id):
     """
@@ -25,6 +28,111 @@ def notify_admin(bot, message, markup=None):
         bot.send_message(ADMIN_ID, message, parse_mode="Markdown", reply_markup=markup)
     except Exception as e:
         print(f"Failed to notify admin: {e}")
+
+# -------------------------------
+# GIF Pool Management Utilities
+# -------------------------------
+
+MEDIA_POOL_FILE = "media_pool.json"
+
+GIF_DEFAULTS = {
+    "welcome": WELCOME_GIF,
+    "success": SUCCESS_GIF,
+    "reject": REJECT_GIF,
+    "pending": PENDING_GIF,
+    # Generic pool for untagged GIFs from groups
+    "any": None,
+}
+
+def _default_media_pool() -> Dict[str, List[str]]:
+    return {k: [] for k in GIF_DEFAULTS.keys()}
+
+def load_media_pool() -> Dict[str, List[str]]:
+    """Loads the GIF file_id pool from disk, returns default structure if missing/corrupt."""
+    try:
+        if not os.path.exists(MEDIA_POOL_FILE):
+            return _default_media_pool()
+        with open(MEDIA_POOL_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Ensure all expected keys exist
+        for k in GIF_DEFAULTS.keys():
+            data.setdefault(k, [])
+        return data
+    except Exception as e:
+        print(f"Failed to load media pool: {e}")
+        return _default_media_pool()
+
+def save_media_pool(pool: Dict[str, List[str]]):
+    """Persists the GIF file_id pool to disk."""
+    try:
+        with open(MEDIA_POOL_FILE, "w", encoding="utf-8") as f:
+            json.dump(pool, f, indent=2)
+    except Exception as e:
+        print(f"Failed to save media pool: {e}")
+
+def add_gif_to_pool(kind: str, file_id: str) -> int:
+    """Adds a GIF file_id to the pool for the given kind. Returns new count for that kind."""
+    kind = kind.lower()
+    if kind not in GIF_DEFAULTS:
+        raise ValueError(f"Unsupported GIF kind '{kind}'. Use one of: {', '.join(GIF_DEFAULTS.keys())}")
+    pool = load_media_pool()
+    if file_id not in pool[kind]:
+        pool[kind].append(file_id)
+        save_media_pool(pool)
+    return len(pool[kind])
+
+def get_random_gif(kind: str) -> str:
+    """Returns a random file_id from the pool for kind, or the default configured URL if empty."""
+    kind = kind.lower()
+    pool = load_media_pool()
+    items = pool.get(kind, [])
+    if items:
+        return random.choice(items)
+    # Fallback to 'any' pool
+    any_items = pool.get("any", [])
+    if any_items:
+        return random.choice(any_items)
+    # fallback to configured URL (Telegram accepts either file_id or URL) if enabled
+    if USE_GIF_URL_FALLBACK:
+        return GIF_DEFAULTS.get(kind)
+    # No fallback: force caller to handle with text
+    return None
+
+def get_media_pool_counts() -> Dict[str, int]:
+    """Returns a map of kind -> count for GIF pools."""
+    pool = load_media_pool()
+    return {k: len(v) for k, v in pool.items()}
+
+def clear_media_pool(kind: str | None = None) -> Dict[str, int]:
+    """Clears a specific pool kind or all pools if kind is None or 'all'. Returns new counts."""
+    pool = load_media_pool()
+    if kind is None or kind.lower() == 'all':
+        pool = _default_media_pool()
+    else:
+        k = kind.lower()
+        if k in pool:
+            pool[k] = []
+    save_media_pool(pool)
+    return {k: len(v) for k, v in pool.items()}
+
+def send_random_animation(bot, chat_id: int, kind: str, caption: str = None, reply_markup=None, parse_mode: str | None = None):
+    """Sends a random animation from the pool (or default) for the given kind."""
+    try:
+        file_id_or_url = get_random_gif(kind)
+        if not file_id_or_url:
+            # As a last resort, just skip animation and send text
+            if caption:
+                bot.send_message(chat_id, caption, reply_markup=reply_markup, parse_mode=parse_mode)
+            return
+        bot.send_animation(chat_id, file_id_or_url, caption=caption, reply_markup=reply_markup, parse_mode=parse_mode)
+    except Exception as e:
+        print(f"Failed to send animation '{kind}': {e}")
+        # Fallback to text
+        if caption:
+            try:
+                bot.send_message(chat_id, caption, reply_markup=reply_markup, parse_mode=parse_mode)
+            except Exception:
+                pass
 
 def get_country_list():
     """
@@ -85,7 +193,7 @@ def get_country_list():
         "Samoa": "🇼🇸", "Solomon Islands": "🇸🇧", "Tonga": "🇹🇴", "Vanuatu": "🇻🇺"
     }
 
-def generate_fake_details():
+def generate_fake_details(_specs: str | None = None):
     """
     Generates fake name details for an order to be displayed after a successful payment.
     This adds a layer of realism to the product delivery message.

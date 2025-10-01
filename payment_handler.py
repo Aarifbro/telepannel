@@ -3,22 +3,85 @@ import sqlite3
 import uuid
 from datetime import datetime, UTC
 from telebot import types
-from config import DB_NAME, ADMIN_ID, CRYPTO_ADDRESS # NOTE: Removed PAYMENTIO_API_KEY, added ADMIN_ID and CRYPTO_ADDRESS
+from config import DB_NAME, ADMIN_ID, CRYPTO_ADDRESS
+from helpers import send_random_animation
 from helpers import generate_fake_details # NOTE: Assuming notify_admin is handled by the direct message below
-from database import load_products
-from other_handlers import CATEGORY_NAMES
+from database import load_products, get_user_balance, update_user_balance
 
 # Placeholder for the deliver_product function, as its definition was not provided.
 # This function should contain the logic for sending the purchased item to the user.
 def deliver_product(bot, user_id, order_id, item_details):
     """
-    Delivers the purchased product to the user.
+    Delivers the purchased product to the user based on the item's 'delivery_type'.
+    - 'link': Forwards a Telegram message.
+    - 'file': Sends a file from the server.
+    - Default: Sends the item details as a JSON object.
     """
     print(f"INFO: Delivering product for order {order_id} to user {user_id}.")
     try:
-        details_text = json.dumps(item_details, indent=2)
-        bot.send_message(user_id, f"✅ Your order `{order_id}` is complete!\n\nHere are your item details:\n```json\n{details_text}\n```", parse_mode="Markdown")
-        # Add your actual delivery logic here (e.g., sending a file, generating details, etc.)
+        delivery_type = item_details.get("delivery_type")
+
+        if delivery_type == "link":
+            link = item_details.get("delivery_content")
+            if not link or "t.me" not in link:
+                raise ValueError("Invalid or missing Telegram message link in delivery_content.")
+            
+            # Parse the link: https://t.me/c/1234567890/123 -> ('-1001234567890', '123')
+            parts = link.split('/')
+            from_chat_id = int(f"-100{parts[-2]}")
+            message_id = int(parts[-1])
+            
+            bot.send_message(user_id, f"✅ Your order `{order_id}` is complete! Here is your content:", parse_mode="Markdown")
+            bot.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
+
+        elif delivery_type == "text":
+            text_content = item_details.get("delivery_content")
+            if not text_content:
+                raise ValueError("Missing text content in delivery_content.")
+            
+            bot.send_message(user_id, f"✅ Your order `{order_id}` is complete! Here is your item:", parse_mode="Markdown")
+            bot.send_message(user_id, text_content, parse_mode="HTML") # Assuming content might have HTML formatting
+
+        elif delivery_type == "generate":
+            # For items like Custom CC, generate details on the fly.
+            generated_details = generate_fake_details(item_details.get("custom_specs"))
+            details_text = json.dumps(generated_details, indent=2)
+            bot.send_message(user_id, f"✅ Your order `{order_id}` is complete!\n\nHere are your generated item details:\n```json\n{details_text}\n```", parse_mode="Markdown")
+
+        elif delivery_type == "file":
+            file_path = item_details.get("delivery_content")
+            if not file_path:
+                raise ValueError("Missing file path in delivery_content.")
+            
+            bot.send_message(user_id, f"✅ Your order `{order_id}` is complete! Here is your file:", parse_mode="Markdown")
+            with open(file_path, 'rb') as f:
+                bot.send_document(user_id, f)
+
+        elif delivery_type == "tg_document":
+            file_id = item_details.get("delivery_content")
+            bot.send_message(user_id, f"✅ Your order `{order_id}` is complete! Document:", parse_mode="Markdown")
+            bot.send_document(user_id, file_id)
+
+        elif delivery_type == "tg_photo":
+            file_id = item_details.get("delivery_content")
+            bot.send_message(user_id, f"✅ Your order `{order_id}` is complete! Photo:", parse_mode="Markdown")
+            bot.send_photo(user_id, file_id)
+
+        elif delivery_type == "tg_video":
+            file_id = item_details.get("delivery_content")
+            bot.send_message(user_id, f"✅ Your order `{order_id}` is complete! Video:", parse_mode="Markdown")
+            bot.send_video(user_id, file_id)
+
+        elif delivery_type == "tg_animation":
+            file_id = item_details.get("delivery_content")
+            bot.send_message(user_id, f"✅ Your order `{order_id}` is complete! Animation:", parse_mode="Markdown")
+            bot.send_animation(user_id, file_id)
+
+        else:
+            # Default behavior: send item details as text
+            details_text = json.dumps(item_details, indent=2)
+            bot.send_message(user_id, f"✅ Your order `{order_id}` is complete!\n\nHere are your item details:\n```json\n{details_text}\n```", parse_mode="Markdown")
+
     except Exception as e:
         print(f"ERROR: Could not deliver product for order {order_id}. Error: {e}")
         bot.send_message(user_id, f"There was an issue delivering your item for order `{order_id}`. Please contact support.", parse_mode="Markdown")
@@ -95,7 +158,7 @@ def register_payment_handlers(bot):
 def show_payment_options(bot, call, item, price, item_details, back_callback):
     """Displays the initial payment screen with the price and a button to proceed."""
     bot.send_chat_action(call.message.chat.id, 'typing')
-    text = f"<b>� Order Summary</b>\n\n<b>Item:</b> {item}\n<b>Price:</b> ${price}\n\nPress <b>Proceed</b> to get payment details."
+    text = f"<b>🧾 Order Summary</b>\n\n<b>Item:</b> {item}\n<b>Price:</b> ${price}\n\nPress <b>Proceed</b> to get payment details."
     markup = types.InlineKeyboardMarkup(row_width=1)
     details_str = json.dumps(item_details)
     callback_data = f"start_manual_{price}_{item}_{details_str}"
@@ -246,7 +309,7 @@ An administrator will now verify your transaction. You will be notified once it 
             receipt += f"<b>Date:</b> {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}\n"
             receipt += f"<b>Details:</b> <code>{json.dumps(item_details, indent=2)}</code>\n"
             receipt += "\n<b>Status:</b> <b>Paid & Delivered ✅</b>\n"
-            bot.send_message(user_id, receipt, parse_mode="HTML")
+            send_random_animation(bot, user_id, kind="success", caption=receipt, parse_mode="HTML")
             bot.edit_message_text(call.message.text + f"\n\n<b>Action:</b> Approved by {call.from_user.first_name} ✅", call.message.chat.id, call.message.message_id, reply_markup=None, parse_mode="HTML")
 
         except Exception as e:
@@ -280,7 +343,7 @@ An administrator will now verify your transaction. You will be notified once it 
                 conn.commit()
 
             user_msg = f"⚠️ **Payment Rejected**\n\nYour payment with ID `{payment_id}` could not be confirmed. Please contact support for assistance."
-            bot.send_message(user_id, user_msg, parse_mode="Markdown")
+            send_random_animation(bot, user_id, kind="reject", caption=user_msg, parse_mode="Markdown")
             
             bot.edit_message_text(call.message.text + f"\n\n**Action: Rejected by {call.from_user.first_name}** ❌", call.message.chat.id, call.message.message_id, reply_markup=None, parse_mode="Markdown")
 

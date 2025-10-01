@@ -6,9 +6,9 @@ import sqlite3
 import telebot
 from telebot import types
 
-from config import API_TOKENS, ADMIN_ID, DB_NAME
+from config import API_TOKENS, ADMIN_ID, DB_NAME, WELCOME_GIF, MEDIA_SOURCE_GROUP_IDS
 from database import init_db, add_user, load_products
-from helpers import check_force_join, notify_admin
+from helpers import check_force_join, notify_admin, send_random_animation, add_gif_to_pool
 from cc_handler import register_cc_handlers
 from bin_handler import register_bin_handlers
 from payment_handler import register_payment_handlers, show_payment_options
@@ -57,6 +57,36 @@ def get_section_status(section_key):
 
 # Global user states (simple approach shared across bots)
 user_states = {}
+# In-memory cache for products
+products_cache = {}
+
+def load_all_products_into_cache():
+    """Loads all product data from JSON files into an in-memory cache."""
+    global products_cache
+    try:
+        with open("products.json", 'r', encoding='utf-8') as f:
+            products_cache = json.load(f)
+        print("✅ Products loaded into in-memory cache.")
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"🔴 Could not load products.json: {e}. Using empty cache.")
+        products_cache = {"bins": [], "ready_ccs": [], "gift_cards": [], "rdp": [], "methods": [], "other": []}
+
+def get_products_from_cache(category=None):
+    """Returns all products or products from a specific category from the cache."""
+    if category:
+        return products_cache.get(category, [])
+    return products_cache
+
+def save_products_to_file_and_reload(new_data):
+    """Saves new data to the file and reloads the cache."""
+    global products_cache
+    try:
+        with open("products.json", 'w', encoding='utf-8') as f:
+            json.dump(new_data, f, indent=4)
+        products_cache = new_data
+        print("✅ products.json updated and cache reloaded.")
+    except Exception as e:
+        print(f"🔴 Failed to save products and reload cache: {e}")
 
 
 def register_all_handlers(bot_instance):
@@ -64,7 +94,7 @@ def register_all_handlers(bot_instance):
     register_cc_handlers(bot_instance, user_states)
     register_bin_handlers(bot_instance)
     register_payment_handlers(bot_instance)
-    register_other_handlers(bot_instance, user_states)
+    register_other_handlers(bot_instance, user_states, get_products_from_cache, save_products_to_file_and_reload)
 
     # ---------- Local handlers and menus ----------
     def send_main_menu(chat_id, text, message_id=None):
@@ -77,8 +107,8 @@ def register_all_handlers(bot_instance):
             types.InlineKeyboardButton("💾 Dumps", callback_data="dumps_menu"),
             types.InlineKeyboardButton("🕵️ Hacks", callback_data="hacks_menu"),
             types.InlineKeyboardButton("🖥️ RDP", callback_data="rdp_menu"),
-            types.InlineKeyboardButton("📚 Methods", callback_data="method_menu"),
             types.InlineKeyboardButton("✨ Other", callback_data="other_menu"),
+            types.InlineKeyboardButton("🧠 AI Search", callback_data="ai_search"),
             types.InlineKeyboardButton("👤 Personal Area", callback_data="personal_area"),
             types.InlineKeyboardButton("🆘 Support", callback_data="support"),
             types.InlineKeyboardButton("📜 Rules", callback_data="rules")
@@ -123,9 +153,9 @@ def register_all_handlers(bot_instance):
         referrer_code = parts[1] if len(parts) > 1 else None
         add_user(user_id, username, referrer_code)
         intro_text = (
-            "💘💥  ฬ𝔀𝓮𝓵𝓬𝓸𝓶𝓮 𝓽𝓸 𝓽𝓱𝓮 𝓟𝓻𝓮𝓶𝓲𝓾𝓶 𝓢𝓱𝓸𝓹  💜👑\n"
-            "𝓟𝓵𝓮𝓪𝓼𝓮 𝓬𝓱𝓸𝓸𝓼𝓮 𝓪𝓷 𝓸𝓹𝓽𝓲𝓸𝓷 𝓯𝓻𝓸𝓶 𝓽𝓱𝓮 𝓶𝓮𝓷𝓾 𝓽𝓸 𝓫𝓮𝓰𝓲𝓷\n \n"
-            "👇\n 𝓟𝓵𝓮𝓪𝓼𝓮 𝓬𝓱𝓸𝓸𝓼𝓮 𝓪𝓷 𝓸𝓹𝓽𝓲𝓸𝓷 𝓯𝓻𝓸𝓶 𝓽𝓱𝓮 𝓶𝓮𝓷𝓾 𝓽𝓸 𝓫𝓮𝓰𝓲𝓷\n\n👇"
+            "🎉 <b>Welcome to the Premium Shop</b> 💜👑\n"
+            "✨ <b>Everything you need in one place.</b>\n\n"
+            "👇 <b>Use the buttons below to navigate.</b>"
         )
         if not check_force_join(bot_instance, user_id):
             from config import FORCE_CHANNEL_LINKS
@@ -134,15 +164,22 @@ def register_all_handlers(bot_instance):
                 markup.add(types.InlineKeyboardButton("🔗 Join Channel/Group", url=link))
             markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
             force_join_text = f"{intro_text}\n\n⚠️ To get full access, you must first join all our partner channels/groups."
-            bot_instance.send_message(user_id, force_join_text, reply_markup=markup, parse_mode="HTML")
+            try:
+                send_random_animation(bot_instance, user_id, kind="welcome", caption=force_join_text, reply_markup=markup, parse_mode="HTML")
+            except Exception:
+                bot_instance.send_message(user_id, force_join_text, reply_markup=markup, parse_mode="HTML")
         else:
-            send_main_menu(user_id, intro_text)
+            try:
+                send_random_animation(bot_instance, user_id, kind="welcome", caption=intro_text, parse_mode="HTML")
+            except Exception:
+                bot_instance.send_message(user_id, intro_text, parse_mode="HTML")
+            send_main_menu(user_id, "👇 **Please choose an option from the menu to begin.**")
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "check_join")
     def joined_callback(call):
         if check_force_join(bot_instance, call.from_user.id):
             bot_instance.delete_message(call.message.chat.id, call.message.message_id)
-            send_main_menu(call.message.chat.id, "✅𝕿𝖍𝖆𝖓𝖐 𝖞𝖔𝖚 𝖋𝖔𝖗 𝖏𝖔𝖎𝖓𝖎𝖓𝖌! 𝖄𝖔𝖚 𝖈𝖆𝖓 𝖓𝖔𝖜 𝖚𝖘𝖊 𝖙𝖍𝖊 𝖇𝖔𝖙")
+            send_main_menu(call.message.chat.id, "✅ **Thank you for joining!** You can now use the bot.")
         else:
             bot_instance.answer_callback_query(call.id, "❌ You haven't joined the channel yet.", show_alert=True)
 
@@ -189,13 +226,14 @@ def register_all_handlers(bot_instance):
     def hacks_menu(call):
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(types.InlineKeyboardButton("🎣 Premium Phishing Kits", callback_data="phishing_kits_menu"))
+        markup.add(types.InlineKeyboardButton("📚 Methods", callback_data="method_menu"))
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         bot_instance.edit_message_text("<b>🛡️ Buy Hacks</b>\n\nSelect a category:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     # Premium Phishing Kits submenu
     @bot_instance.callback_query_handler(func=lambda call: call.data == "phishing_kits_menu")
     def phishing_kits_menu(call):
-        products = load_products().get("phishing_kits", [])
+        products = get_products_from_cache("phishing_kits")
         markup = types.InlineKeyboardMarkup(row_width=1)
         if not products:
             markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="hacks_menu"))
@@ -212,7 +250,7 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("phishing_kit_detail_"))
     def phishing_kit_detail(call):
         idx = int(call.data.split("_")[-1])
-        products = load_products().get("phishing_kits", [])
+        products = get_products_from_cache("phishing_kits")
         if idx >= len(products):
             bot_instance.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
             return
@@ -231,7 +269,7 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("buy_phishing_kit_"))
     def buy_phishing_kit(call):
         idx = int(call.data.split("_")[-1])
-        products = load_products().get("phishing_kits", [])
+        products = get_products_from_cache("phishing_kits")
         if idx >= len(products):
             bot_instance.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
             return
@@ -299,7 +337,7 @@ def register_all_handlers(bot_instance):
     # Dumps
     @bot_instance.callback_query_handler(func=lambda call: call.data == "dumps_menu")
     def dumps_menu(call):
-        products = load_products().get("dumps", [])
+        products = get_products_from_cache("dumps")
         markup = types.InlineKeyboardMarkup(row_width=1)
         if not products:
             markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
@@ -316,7 +354,7 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("dumps_detail_"))
     def dumps_detail(call):
         idx = int(call.data.split("_")[-1])
-        products = load_products().get("dumps", [])
+        products = get_products_from_cache("dumps")
         if idx >= len(products):
             bot_instance.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
             return
@@ -334,7 +372,7 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("buy_dump_"))
     def buy_dump_callback(call):
         idx = int(call.data.split("_")[-1])
-        products = load_products().get("dumps", [])
+        products = get_products_from_cache("dumps")
         if idx >= len(products):
             bot_instance.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
             return
@@ -343,35 +381,162 @@ def register_all_handlers(bot_instance):
         name = item.get("name", "Unnamed Dump")
         show_payment_options(bot_instance, call, name, price, item, "dumps_menu")
 
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "ai_search")
+    def ai_search_prompt(call):
+        """Prompts the user to enter their search query."""
+        user_states[call.from_user.id] = "awaiting_ai_search"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Cancel", callback_data="main_menu"))
+        bot_instance.edit_message_text(
+            "🧠 **AI Smart Search**\n\nWhat are you looking for? You can search for anything, like `Netflix BIN`, `USA VISA card`, or `phishing guide`.",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+
+    @bot_instance.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_ai_search")
+    def handle_ai_search(message):
+        """Performs the AI search and displays results."""
+        del user_states[message.from_user.id]
+        query = message.text.lower()
+        all_products = get_products_from_cache()
+        
+        results = []
+        # Iterate through all categories and items
+        for category, items in all_products.items():
+            for index, item in enumerate(items):
+                # Create a searchable text block for each item
+                search_block = f"{item.get('name', '')} {item.get('description', '')} {item.get('bin', '')} {item.get('country', '')} {item.get('info', '')} {item.get('bank', '')}".lower()
+                
+                # Simple keyword matching
+                if all(word in search_block for word in query.split()):
+                    # Add category and index to identify the item later
+                    item['category'] = category
+                    item['index'] = index
+                    results.append(item)
+
+        if not results:
+            bot_instance.send_message(message.chat.id, "Sorry, I couldn't find any items matching your search.")
+            return
+
+        # Display results
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        text = f"🧠 **Search Results for:** `{query}`\n\n"
+        for item in results[:20]: # Limit to 20 results
+            name = item.get("name", "Unnamed")
+            price = item.get("price", "?")
+            # Use the original category and index for the callback
+            callback_data = f"buy_idx_{item['category']}_{item['index']}"
+            markup.add(types.InlineKeyboardButton(f"🛒 {name} - ${price}", callback_data=callback_data))
+        
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+        bot_instance.send_message(message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
+
     @bot_instance.callback_query_handler(func=lambda call: call.data == "main_menu")
     def main_menu_callback(call):
         send_main_menu(call.message.chat.id, "✅ Welcome back! Please choose an option:", call.message.message_id)
 
+    # Utility: Get chat ID (admin-only)
+    @bot_instance.message_handler(commands=['chatid'])
+    def cmd_chatid(message):
+        if message.from_user.id != ADMIN_ID:
+            return
+        bot_instance.reply_to(message, f"Chat ID: <code>{message.chat.id}</code>", parse_mode="HTML")
+
+    # --- Auto-ingest GIFs from configured groups using hashtags ---
+    @bot_instance.message_handler(content_types=['animation'])
+    def ingest_group_gifs(message):
+        try:
+            if message.chat and message.chat.id in set(MEDIA_SOURCE_GROUP_IDS or []):
+                caption = (message.caption or "").lower()
+                kind = None
+                if "#welcome" in caption:
+                    kind = "welcome"
+                elif "#success" in caption:
+                    kind = "success"
+                elif "#reject" in caption:
+                    kind = "reject"
+                elif "#pending" in caption:
+                    kind = "pending"
+                # store to specific pool if tagged, else to 'any' pool
+                from helpers import add_gif_to_pool
+                use_kind = kind if kind else "any"
+                count = add_gif_to_pool(use_kind, message.animation.file_id)
+                # acknowledge in group via reply if possible
+                try:
+                    if kind:
+                        bot_instance.reply_to(message, f"✅ Saved to '{use_kind}' pool. Total: {count}")
+                    else:
+                        bot_instance.reply_to(message, f"✅ Saved to general GIF pool. Total: {count}")
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"GIF ingest error: {e}")
+
+    # --- Admin: Add GIF to pool ---
+    @bot_instance.message_handler(func=lambda m: m.from_user and m.from_user.id == ADMIN_ID and m.caption and m.caption.lower().startswith("/addgif"), content_types=['animation'])
+    def admin_add_gif(message):
+        try:
+            parts = message.caption.split()
+            if len(parts) < 2:
+                bot_instance.reply_to(message, "Usage: /addgif <welcome|success|reject|pending> (send as caption with the GIF)")
+                return
+            kind = parts[1].lower()
+            file_id = message.animation.file_id if message.animation else None
+            if not file_id:
+                bot_instance.reply_to(message, "Please send this command as a caption on an animated GIF.")
+                return
+            count = add_gif_to_pool(kind, file_id)
+            bot_instance.reply_to(message, f"✅ Added GIF to '{kind}' pool. Total now: {count}")
+        except Exception as e:
+            bot_instance.reply_to(message, f"Error adding GIF: {e}")
 
 def run_bot(bot_instance, name):
+    """Bot runner with improved resilience and network settings."""
     while True:
         try:
             print(f"▶️ Starting polling for {name}...")
-            bot_instance.infinity_polling(skip_pending=True, timeout=90)
+            # Use a shorter timeout and keep-alive for better network performance
+            bot_instance.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=30)
         except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError, telebot.apihelper.ApiTelegramException) as e:
-            print(f"🔴 Network error in {name}: {e}. Retrying in 15 seconds...")
-            time.sleep(15)
+            print(f"🔴 Network error in {name}: {e}. Retrying in 10 seconds...")
+            time.sleep(10)
         except Exception as e:
-            print(f"An unexpected error occurred in {name}: {e}. Retrying in 30 seconds...")
-            time.sleep(30)
+            print(f"An unexpected error occurred in {name}: {e}. Retrying in 20 seconds...")
+            time.sleep(20)
 
 
 if __name__ == '__main__':
     print("🤖 Starting bots...")
     init_db()
+    load_all_products_into_cache()  # Load products into memory at startup
+
     # Optimize HTTP session reuse
     try:
-        telebot.apihelper.SESSION_TIME_TO_LIVE = 15
-    except Exception:
-        pass
+        # Keep sessions alive for longer to reduce connection overhead
+        telebot.apihelper.SESSION_TIME_TO_LIVE = 60
+        # Create a persistent session object
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=retry_strategy)
+        session = requests.Session()
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        telebot.apihelper.session = session
+        print("✅ Custom requests session configured with retries.")
+
+    except Exception as e:
+        print(f"Could not configure advanced session management: {e}")
 
     # Create bot instances with a larger thread pool for faster handler processing
-    bots = [telebot.TeleBot(token, num_threads=8) for token in API_TOKENS]
+    bots = [telebot.TeleBot(token, num_threads=16) for token in API_TOKENS]
     for idx, b in enumerate(bots, start=1):
         register_all_handlers(b)
         try:

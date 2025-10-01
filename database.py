@@ -41,12 +41,21 @@ def init_db():
             print("Updating database schema: Adding 'username' column...")
             cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
         
+        if 'balance_usd' not in columns:
+            print("Updating database schema: Adding 'balance_usd' column...")
+            cursor.execute("ALTER TABLE users ADD COLUMN balance_usd REAL DEFAULT 0.0")
+
         if 'referral_code' not in columns:
             cursor.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
         if 'referred_by' not in columns:
             cursor.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
         if 'referral_count' not in columns:
             cursor.execute("ALTER TABLE users ADD COLUMN referral_count INTEGER DEFAULT 0")
+
+        # Track whether a user is still reachable by the bot for broadcasts
+        if 'is_active' not in columns:
+            print("Updating database schema: Adding 'is_active' column...")
+            cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
 
         # Create the giveaway winners table
         cursor.execute('''
@@ -112,13 +121,34 @@ def add_user(user_id, username, referrer_code=None):
                 cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
         conn.commit()
 
+def get_user_balance(user_id):
+    """Fetches the current balance for a given user."""
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT balance_usd FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        return result[0] if result else 0.0
+
+def update_user_balance(user_id, amount_change):
+    """
+    Updates a user's balance by a given amount (can be positive or negative).
+    Returns the new balance.
+    """
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET balance_usd = balance_usd + ? WHERE user_id = ?", (amount_change, user_id))
+        conn.commit()
+        cursor.execute("SELECT balance_usd FROM users WHERE user_id = ?", (user_id,))
+        new_balance = cursor.fetchone()[0]
+        return new_balance
+
 def get_user_details(user_id):
     """
     Fetches all necessary details for a user.
     """
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, join_date, referral_code, referral_count FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT user_id, username, join_date, referral_code, referral_count, balance_usd FROM users WHERE user_id = ?", (user_id,))
         user = cursor.fetchone()
         if user:
             # Return the data in a clean dictionary format
@@ -127,9 +157,14 @@ def get_user_details(user_id):
                 "username": user[1],
                 "join_date": user[2],
                 "referral_code": user[3],
-                "referral_count": user[4]
+                "referral_count": user[4],
+                "balance": user[5]
             }
         return None
+
+# The load_products and save_products functions are now managed in main.py for caching.
+# You can remove them from here if they are no longer used by any other module directly.
+# For now, they are left for compatibility in case other modules import them.
 
 def load_products():
     """
