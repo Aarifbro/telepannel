@@ -17,10 +17,10 @@ def register_cc_handlers(bot, user_states):
     def cc_menu(call):
         bot.send_chat_action(call.message.chat.id, 'typing')
         markup = types.InlineKeyboardMarkup(row_width=1)
+        # Show exactly two options as requested: Ready CCs and Customize CC
         markup.add(
-            types.InlineKeyboardButton("🛍️ Select CC", callback_data="ready_cc_menu"),
-            types.InlineKeyboardButton("🔍 Your Bin", callback_data="enter_bin_menu"),
-            types.InlineKeyboardButton("⚙️ Customize", callback_data="custom_cc_start")
+            types.InlineKeyboardButton("🛍️ Ready CCs", callback_data="ready_cc_menu"),
+            types.InlineKeyboardButton("⚙️ Customize CC", callback_data="custom_cc_start")
         )
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         bot.edit_message_text(

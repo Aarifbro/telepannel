@@ -158,7 +158,19 @@ def register_payment_handlers(bot):
 def show_payment_options(bot, call, item, price, item_details, back_callback):
     """Displays the initial payment screen with the price and a button to proceed."""
     bot.send_chat_action(call.message.chat.id, 'typing')
-    text = f"<b>🧾 Order Summary</b>\n\n<b>Item:</b> {item}\n<b>Price:</b> ${price}\n\nPress <b>Proceed</b> to get payment details."
+    user_id = call.from_user.id
+    balance = 0.0
+    try:
+        balance = float(get_user_balance(user_id))
+    except Exception:
+        balance = 0.0
+    text = (
+        f"<b>🧾 Order Summary</b>\n\n"
+        f"<b>Item:</b> {item}\n"
+        f"<b>Price:</b> ${price}\n"
+        f"<b>Your Wallet:</b> ${balance:.2f}\n\n"
+        f"Choose a payment option:"
+    )
     markup = types.InlineKeyboardMarkup(row_width=1)
     details_str = json.dumps(item_details)
     callback_data = f"start_manual_{price}_{item}_{details_str}"
@@ -169,7 +181,15 @@ def show_payment_options(bot, call, item, price, item_details, back_callback):
         if not hasattr(bot, '_dumps_temp'): bot._dumps_temp = {}
         bot._dumps_temp[key] = {'item': item, 'price': price, 'item_details': item_details, 'back_callback': back_callback}
         callback_data = f"start_manual_short_{key}"
-    markup.add(types.InlineKeyboardButton("➡️ Proceed", callback_data=callback_data))
+    # Manual crypto payment
+    markup.add(types.InlineKeyboardButton("💱 Pay Manually (Crypto)", callback_data=callback_data))
+    # Wallet payment option if sufficient balance
+    if balance >= float(price):
+        # For wallet pay, we need a compact payload too
+        wallet_key = str(uuid.uuid4())[:8]
+        if not hasattr(bot, '_wallet_temp'): bot._wallet_temp = {}
+        bot._wallet_temp[wallet_key] = {'item': item, 'price': float(price), 'item_details': item_details, 'back_callback': back_callback}
+        markup.add(types.InlineKeyboardButton("💳 Pay with Wallet", callback_data=f"pay_wallet_{wallet_key}"))
     markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data=back_callback))
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
@@ -210,9 +230,10 @@ def show_payment_options(bot, call, item, price, item_details, back_callback):
                 f"<b>IMPORTANT:</b> You must include the <b>Payment ID</b> in the memo/note of your transaction for verification.\n\n"
                 f"<b>Address:</b> <code>{CRYPTO_ADDRESS}</code>\n"
                 f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
-                f"After sending the payment, click the button below."
+                f"After sending the payment, upload a payment screenshot here, then click the confirmation button."
             )
             markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(types.InlineKeyboardButton("📷 Upload Screenshot", callback_data=f"upload_ss_{payment_id}"))
             markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data=f"paid_confirm_{payment_id}"))
             markup.add(types.InlineKeyboardButton("❌ Cancel Order", callback_data=back_callback))
             bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
@@ -226,6 +247,18 @@ def show_payment_options(bot, call, item, price, item_details, back_callback):
         """Handles the user's confirmation of payment and notifies the admin."""
         try:
             payment_id = call.data.split('_')[2]
+            # Enforce screenshot requirement if no wallet payment
+            ss_map = getattr(bot, '_payment_screenshots', {})
+            if ss_map.get(payment_id) is None:
+                # Check DB status to ensure this is a manual order in pending payment
+                with sqlite3.connect(DB_NAME) as conn:
+                    c = conn.cursor()
+                    row = c.execute("SELECT payment_method, payment_status FROM orders WHERE order_id = ?", (payment_id,)).fetchone()
+                if not row or row[0] != 'MANUAL_CRYPTO' or row[1] not in ('PENDING_PAYMENT','PENDING_APPROVAL'):
+                    pass
+                else:
+                    bot.answer_callback_query(call.id, "Please upload a payment screenshot first.", show_alert=True)
+                    return
             bot.answer_callback_query(call.id, "Confirmation received. Notifying admin...")
 
             with sqlite3.connect(DB_NAME) as conn:
@@ -256,7 +289,15 @@ Please verify the transaction and approve or reject it.
                 types.InlineKeyboardButton("✅ Approve", callback_data=f"admin_approve_{payment_id}"),
                 types.InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_{payment_id}")
             )
-            bot.send_message(ADMIN_ID, admin_text, reply_markup=admin_markup, parse_mode="Markdown")
+            # Attach screenshot if provided
+            screenshot_file_id = getattr(bot, '_payment_screenshots', {}).get(payment_id)
+            if screenshot_file_id:
+                try:
+                    bot.send_photo(ADMIN_ID, screenshot_file_id, caption=admin_text, reply_markup=admin_markup, parse_mode="Markdown")
+                except Exception:
+                    bot.send_message(ADMIN_ID, admin_text + "\n(Note: Screenshot attached but failed to send)", reply_markup=admin_markup, parse_mode="Markdown")
+            else:
+                bot.send_message(ADMIN_ID, admin_text + "\n(Note: No screenshot uploaded)", reply_markup=admin_markup, parse_mode="Markdown")
             
             user_text = f"""
 ⏳ **Waiting for Approval**
@@ -271,6 +312,83 @@ An administrator will now verify your transaction. You will be notified once it 
             print(f"Error confirming payment: {e}")
             bot.answer_callback_query(call.id, "An error occurred.", show_alert=True)
 
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("upload_ss_"))
+    def request_screenshot_upload(call):
+        payment_id = call.data.split('_')[-1]
+        if not hasattr(bot, '_awaiting_ss'):
+            bot._awaiting_ss = {}
+        bot._awaiting_ss[call.from_user.id] = payment_id
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="main_menu"))
+        bot.edit_message_text(
+            f"Please send a <b>photo or image</b> as your payment screenshot for Payment ID <code>{payment_id}</code>.",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
+
+    @bot.message_handler(content_types=['photo'])
+    def capture_payment_screenshot(message):
+        try:
+            pending = getattr(bot, '_awaiting_ss', {})
+            payment_id = pending.get(message.from_user.id)
+            if not payment_id:
+                return
+            file_id = message.photo[-1].file_id
+            if not hasattr(bot, '_payment_screenshots'):
+                bot._payment_screenshots = {}
+            bot._payment_screenshots[payment_id] = file_id
+            del bot._awaiting_ss[message.from_user.id]
+            bot.reply_to(message, f"✅ Screenshot saved for Payment ID {payment_id}. Now tap ‘I Have Paid’.")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Could not save screenshot: {e}")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("pay_wallet_"))
+    def pay_with_wallet(call):
+        """Instantly complete purchase using internal wallet balance."""
+        user_id = call.from_user.id
+        key = call.data.split('_')[-1]
+        temp = getattr(bot, '_wallet_temp', {}).get(key)
+        if not temp:
+            bot.answer_callback_query(call.id, "Session expired. Please try again.", show_alert=True)
+            return
+        item = temp['item']
+        price = float(temp['price'])
+        item_details = temp['item_details']
+        try:
+            bal = float(get_user_balance(user_id))
+            if bal < price:
+                bot.answer_callback_query(call.id, "Insufficient wallet balance.", show_alert=True)
+                return
+            # Deduct and create completed order
+            new_bal = update_user_balance(user_id, -price)
+            payment_id = str(uuid.uuid4()).split('-')[1].upper()
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.cursor().execute(
+                    "INSERT INTO orders (order_id, user_id, item_name, price_usd, payment_method, payment_status, creation_date, item_details) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (payment_id, user_id, item, price, "WALLET", "COMPLETED", datetime.now(UTC).isoformat(), json.dumps(item_details))
+                )
+                conn.commit()
+            # Deliver
+            bot.send_chat_action(user_id, 'typing')
+            deliver_product(bot, user_id, payment_id, item_details)
+            receipt = (
+                f"<b>🧾 Payment Receipt</b>\n"
+                f"<b>Order ID:</b> <code>{payment_id}</code>\n"
+                f"<b>Payment Method:</b> Wallet\n"
+                f"<b>Item:</b> {item}\n"
+                f"<b>Price:</b> ${price:.2f}\n"
+                f"<b>New Balance:</b> ${new_bal:.2f}\n"
+                f"<b>Date:</b> {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}\n"
+                f"<b>Status:</b> <b>Paid & Delivered ✅</b>\n"
+            )
+            send_random_animation(bot, user_id, kind="success", caption=receipt, parse_mode="HTML")
+            bot.edit_message_text("✅ Payment completed with wallet.", call.message.chat.id, call.message.message_id)
+        except Exception as e:
+            print(f"Wallet pay error: {e}")
+            bot.answer_callback_query(call.id, "Failed to complete wallet payment.", show_alert=True)
+
     @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_approve_"))
     def admin_approves_payment(call):
         """Handles the admin's 'Approve' action."""
@@ -284,33 +402,50 @@ An administrator will now verify your transaction. You will be notified once it 
 
             with sqlite3.connect(DB_NAME) as conn:
                 cursor = conn.cursor()
-                order_data = cursor.execute("SELECT user_id, item_details, payment_status FROM orders WHERE order_id = ?", (payment_id,)).fetchone()
+                order_data = cursor.execute("SELECT user_id, item_name, item_details, price_usd, payment_status FROM orders WHERE order_id = ?", (payment_id,)).fetchone()
                 
                 if not order_data:
                     bot.edit_message_text(f"Order `{payment_id}` not found.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
                     return
-                if order_data[2] != "PENDING_APPROVAL":
+                if order_data[4] != "PENDING_APPROVAL":
                     bot.answer_callback_query(call.id, "This order has already been processed.", show_alert=True)
                     return
                 
-                user_id, item_details_str, _ = order_data
-                item_details = json.loads(item_details_str)
+                user_id, item_name, item_details_str, price_usd, _ = order_data
+                item_details = json.loads(item_details_str or '{}')
                 cursor.execute("UPDATE orders SET payment_status = ? WHERE order_id = ?", ("COMPLETED", payment_id))
                 conn.commit()
 
-            bot.send_chat_action(user_id, 'typing')
-            deliver_product(bot, user_id, payment_id, item_details)
-            # Generate a formatted receipt
-            receipt = f"<b>🧾 Payment Receipt</b>\n"
-            receipt += f"<b>Order ID:</b> <code>{payment_id}</code>\n"
-            receipt += f"<b>User ID:</b> <code>{user_id}</code>\n"
-            receipt += f"<b>Item:</b> {item_details.get('name', 'N/A')}\n"
-            receipt += f"<b>Price:</b> ${item_details.get('price', 'N/A')}\n"
-            receipt += f"<b>Date:</b> {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}\n"
-            receipt += f"<b>Details:</b> <code>{json.dumps(item_details, indent=2)}</code>\n"
-            receipt += "\n<b>Status:</b> <b>Paid & Delivered ✅</b>\n"
-            send_random_animation(bot, user_id, kind="success", caption=receipt, parse_mode="HTML")
-            bot.edit_message_text(call.message.text + f"\n\n<b>Action:</b> Approved by {call.from_user.first_name} ✅", call.message.chat.id, call.message.message_id, reply_markup=None, parse_mode="HTML")
+            # If this was a wallet deposit, credit user's balance instead of delivering item
+            if item_name == "Wallet Deposit":
+                amount = item_details.get("deposit_amount") or price_usd or 0
+                try:
+                    amount = float(amount)
+                except Exception:
+                    amount = float(price_usd or 0)
+                new_bal = update_user_balance(user_id, amount)
+                msg = (
+                    f"<b>✅ Deposit Approved</b>\n\n"
+                    f"<b>Payment ID:</b> <code>{payment_id}</code>\n"
+                    f"<b>Amount:</b> ${amount:.2f}\n"
+                    f"<b>New Balance:</b> ${new_bal:.2f}\n"
+                )
+                send_random_animation(bot, user_id, kind="success", caption=msg, parse_mode="HTML")
+                bot.edit_message_text(call.message.text + f"\n\n<b>Action:</b> Approved (Deposit) by {call.from_user.first_name} ✅", call.message.chat.id, call.message.message_id, reply_markup=None, parse_mode="HTML")
+            else:
+                # Normal product delivery
+                bot.send_chat_action(user_id, 'typing')
+                deliver_product(bot, user_id, payment_id, item_details)
+                receipt = f"<b>🧾 Payment Receipt</b>\n"
+                receipt += f"<b>Order ID:</b> <code>{payment_id}</code>\n"
+                receipt += f"<b>User ID:</b> <code>{user_id}</code>\n"
+                receipt += f"<b>Item:</b> {item_details.get('name', 'N/A')}\n"
+                receipt += f"<b>Price:</b> ${item_details.get('price', 'N/A')}\n"
+                receipt += f"<b>Date:</b> {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}\n"
+                receipt += f"<b>Details:</b> <code>{json.dumps(item_details, indent=2)}</code>\n"
+                receipt += "\n<b>Status:</b> <b>Paid & Delivered ✅</b>\n"
+                send_random_animation(bot, user_id, kind="success", caption=receipt, parse_mode="HTML")
+                bot.edit_message_text(call.message.text + f"\n\n<b>Action:</b> Approved by {call.from_user.first_name} ✅", call.message.chat.id, call.message.message_id, reply_markup=None, parse_mode="HTML")
 
         except Exception as e:
             print(f"Error approving payment: {e}")

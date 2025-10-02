@@ -6,7 +6,7 @@ import json
 import random
 from config import DB_NAME, ADMIN_ID
 from database import get_user_details, load_products, save_products, get_user_balance, update_user_balance
-from helpers import add_gif_to_pool, get_media_pool_counts, clear_media_pool
+from helpers import add_gif_to_pool, get_media_pool_counts, clear_media_pool, send_random_animation
 
 # A dictionary to map internal category keys to their user-friendly, display-ready names.
 # This makes it easy to change how categories are presented to the user without changing the code logic.
@@ -74,6 +74,7 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
             types.InlineKeyboardButton("➕ Add Section Admin", callback_data="owner_add_section_admin"),
             types.InlineKeyboardButton("➖ Remove Section Admin", callback_data="owner_remove_section_admin"),
             types.InlineKeyboardButton("👥 List Section Admins", callback_data="owner_list_section_admins"),
+            types.InlineKeyboardButton(" Bot Stats", callback_data="owner_bot_stats"),
             types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu")
         )
         bot.edit_message_text("👑 <b>Owner Panel</b>\n\nManage global and section-based admins. Section admins can only manage their assigned section (e.g., Hacks).", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
@@ -82,7 +83,9 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
     @bot.callback_query_handler(func=lambda call: call.data == "owner_add_section_admin")
     def owner_add_section_admin_prompt(call):
         user_states[call.from_user.id] = "awaiting_new_section_admin_id"
-        bot.edit_message_text("Send the <b>User ID</b> and <b>Section</b> (e.g., hacks) to assign, separated by a space.\nExample: <code>123456789 hacks</code>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="owner_panel"))
+        bot.edit_message_text("Send the <b>User ID</b> and <b>Section</b> (e.g., hacks) to assign, separated by a space.\nExample: <code>123456789 hacks</code>", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_new_section_admin_id")
     def owner_add_section_admin(message):
@@ -107,7 +110,9 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
     @bot.callback_query_handler(func=lambda call: call.data == "owner_remove_section_admin")
     def owner_remove_section_admin_prompt(call):
         user_states[call.from_user.id] = "awaiting_remove_section_admin_id"
-        bot.edit_message_text("Send the <b>User ID</b> and <b>Section</b> to remove, separated by a space.\nExample: <code>123456789 hacks</code>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="owner_panel"))
+        bot.edit_message_text("Send the <b>User ID</b> and <b>Section</b> to remove, separated by a space.\nExample: <code>123456789 hacks</code>", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_remove_section_admin_id")
     def owner_remove_section_admin(message):
@@ -141,10 +146,124 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
         markup.add(types.InlineKeyboardButton("⬅️ Back to Owner Panel", callback_data="owner_panel"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
+    @bot.callback_query_handler(func=lambda call: call.data == "owner_remove_admin")
+    def owner_remove_admin_prompt(call):
+        user_states[call.from_user.id] = "awaiting_remove_admin_id"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="owner_panel"))
+        bot.edit_message_text("Send the <b>User ID</b> of the user you want to remove from admins.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_remove_admin_id")
+    def owner_remove_admin(message):
+        try:
+            user_id = int(message.text.strip())
+            if user_id == ADMIN_ID:
+                bot.send_message(message.chat.id, "❌ You cannot remove the owner.")
+                return
+        except ValueError:
+            bot.send_message(message.chat.id, "❌ Invalid format. Please send a numeric User ID.")
+            return
+        
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            # Check if the user is actually an admin
+            cursor.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
+            if cursor.fetchone():
+                cursor.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
+                conn.commit()
+                bot.send_message(message.chat.id, f"✅ User <code>{user_id}</code> removed from global admins.", parse_mode="HTML")
+            else:
+                bot.send_message(message.chat.id, f"User <code>{user_id}</code> is not a global admin.", parse_mode="HTML")
+        
+        del user_states[message.from_user.id]
+
     @bot.callback_query_handler(func=lambda call: call.data == "owner_add_admin")
     def owner_add_admin_prompt(call):
         user_states[call.from_user.id] = "awaiting_new_admin_id"
-        bot.edit_message_text("Send the <b>User ID</b> of the user you want to add as admin.", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="owner_panel"))
+        bot.edit_message_text("Send the <b>User ID</b> of the user you want to add as admin.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_new_admin_id")
+    def owner_add_admin(message):
+        try:
+            if message.from_user.id != ADMIN_ID:
+                return
+            uid = int(message.text.strip())
+            with sqlite3.connect(DB_NAME) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM admins WHERE user_id = ?", (uid,))
+                if cursor.fetchone():
+                    bot.send_message(message.chat.id, f"User <code>{uid}</code> is already a global admin.", parse_mode="HTML")
+                else:
+                    cursor.execute("INSERT INTO admins (user_id, added_by) VALUES (?, ?)", (uid, message.from_user.id))
+                    conn.commit()
+                    bot.send_message(message.chat.id, f"✅ User <code>{uid}</code> added as a global admin.", parse_mode="HTML")
+
+                    # Welcome DM to the new admin
+                    try:
+                        bot.send_message(uid, "👋 You have been added as a <b>Global Admin</b>. Open the bot and tap '🛠️ Admin Panel' to get started.", parse_mode="HTML")
+                    except Exception:
+                        pass
+
+                    # Announce to all users in background
+                    def _announce_new_admin(new_admin_id: int):
+                        try:
+                            with sqlite3.connect(DB_NAME) as conn2:
+                                c2 = conn2.cursor()
+                                c2.execute("SELECT user_id FROM users WHERE COALESCE(is_active,1)=1")
+                                all_users = [r[0] for r in c2.fetchall()]
+                                c2.execute("SELECT user_id FROM admins")
+                                admin_ids = [str(r[0]) for r in c2.fetchall()]
+                        except Exception as e:
+                            print(f"Announce admin DB error: {e}")
+                            return
+
+                        admin_list = "\n".join([f"• <code>{aid}</code>" for aid in admin_ids])
+                        text = (
+                            "🎉 <b>New Support Admin Joined</b>\n\n"
+                            f"A new support admin has joined the team.\n"
+                            f"<b>Admin ID:</b> <code>{new_admin_id}</code>\n\n"
+                            "You can contact our admins using these IDs:\n" + admin_list
+                        )
+                        for uid2 in all_users:
+                            try:
+                                send_random_animation(bot, uid2, kind="welcome", caption=text, parse_mode="HTML")
+                            except Exception as e:
+                                # Fall back to plain message
+                                try:
+                                    bot.send_message(uid2, text, parse_mode="HTML")
+                                except Exception:
+                                    pass
+                            time.sleep(0.05)
+
+                    threading.Thread(target=_announce_new_admin, args=(uid,), daemon=True).start()
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Failed to add admin: {e}")
+        finally:
+            try:
+                del user_states[message.from_user.id]
+            except Exception:
+                pass
+
+    @bot.callback_query_handler(func=lambda call: call.data == "owner_list_admins")
+    def owner_list_admins(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Only the owner can access this panel.", show_alert=True)
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id, added_at FROM admins ORDER BY added_at DESC")
+            rows = cursor.fetchall()
+        text = "<b>Global Admins:</b>\n"
+        if not rows:
+            text += "No global admins found."
+        else:
+            for r in rows:
+                text += f"<code>{r[0]}</code> | added: <code>{(r[1] or '')[:19]}</code>\n"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="owner_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
     """
     Registers all callback handlers for the non-CC/BIN sections of the bot.
     
@@ -228,9 +347,54 @@ This is your personal dashboard where you can find your information, balance, an
 Share this unique link with your friends. Every time someone starts the bot using your link, your referral count will increase. Special bonuses may be available for top referrers in the future!
 """
         markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(types.InlineKeyboardButton("💰 Add Funds", callback_data="add_funds"))
+        # Wallet actions
+        markup.add(
+            types.InlineKeyboardButton("💰 Add Funds", callback_data="add_funds"),
+            types.InlineKeyboardButton("💳 Balance History", callback_data="balance_history")
+        )
+        # Back
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    # Alias: Open Personal Area when user taps "My Profile" button
+    @bot.callback_query_handler(func=lambda call: call.data == "my_profile")
+    def my_profile_alias(call):
+        return personal_area_callback(call)
+
+    @bot.callback_query_handler(func=lambda call: call.data == "balance_history")
+    def balance_history_callback(call):
+        """Show last 10 balance-related transactions (deposits + wallet purchases)."""
+        user_id = call.from_user.id
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT order_id, item_name, price_usd, payment_method, payment_status, creation_date
+                FROM orders
+                WHERE user_id = ? AND (item_name = 'Wallet Deposit' OR payment_method = 'WALLET')
+                ORDER BY creation_date DESC
+                LIMIT 10
+                """,
+                (user_id,)
+            )
+            rows = cursor.fetchall()
+        text = "<b>💳 Balance History</b>\n\n"
+        if not rows:
+            text += "No balance activity yet."
+        else:
+            text += "<code>Type | Amount | Status | Date | Order</code>\n" + ("-"*42) + "\n"
+            for oid, name, amount, method, status, created in rows:
+                if name == 'Wallet Deposit':
+                    typ = 'Deposit'
+                    amt = f"+${int(amount) if amount else 0}"
+                else:
+                    typ = 'Purchase'
+                    amt = f"-${int(amount) if amount else 0}"
+                date_short = created[:10] if created else "-"
+                text += f"<code>{typ}</code> | <code>{amt}</code> | <code>{status}</code> | <code>{date_short}</code> | <code>{oid}</code>\n"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Profile", callback_data="personal_area"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot.callback_query_handler(func=lambda call: call.data == "add_funds")
     def add_funds_callback(call):
@@ -366,15 +530,17 @@ Share this unique link with your friends. Every time someone starts the bot usin
             # Fetch all global admins, excluding the owner
             cursor.execute("SELECT user_id FROM admins WHERE user_id != ?", (ADMIN_ID,))
             admins = cursor.fetchall()
-        
-        text = "🛠️ **Contact Support**\n\nFor complex issues, please contact one of our support agents directly. To help us resolve your issue quickly, please provide your **User ID** when you contact us.\n\n**Your User ID:** `{}`".format(call.from_user.id)
-        
-        admin_list_text = "\n\n**Available Support Agents:**\n"
+
+        # Build user profile lines and admin IDs only
+        user_profile = f"[`Profile`](tg://user?id={call.from_user.id}) | `ID: {call.from_user.id}`"
+        text = "🛠️ **Contact Support**\n\nPlease copy one of the admin IDs and DM on Telegram.\nTo help us assist you, include your user ID and a short description.\n\n**Your:** " + user_profile
+
+        admin_list_text = "\n\n**Support Admin IDs:**\n"
         if not admins:
-            admin_list_text += "No support agents are available right now. Please contact the main owner."
+            admin_list_text += "No global admins configured."
         else:
             for i, admin in enumerate(admins, 1):
-                admin_list_text += f"• [Support Agent #{i}](tg://user?id={admin[0]})\n"
+                admin_list_text += f"• `{admin[0]}`\n"
 
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
@@ -423,16 +589,101 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                 types.InlineKeyboardButton("👥 View Users", callback_data="admin_users"),
                 types.InlineKeyboardButton("🔎 User Lookup", callback_data="admin_user_lookup"),
                 types.InlineKeyboardButton("🏆 Top Referrers", callback_data="admin_top_referrers"),
-                types.InlineKeyboardButton("🎁 Giveaway (Select Winner)", callback_data="admin_giveaway")
+                types.InlineKeyboardButton("🎁 Giveaway (Select Winner)", callback_data="admin_giveaway"),
+            types.InlineKeyboardButton("🔑 Manage Pro Keys", callback_data="manage_pro_keys")
             )
             if user_id == ADMIN_ID:
+                # Owner-only extras inside Admin Panel (no Owner Panel / Status here to keep separation)
                 markup.add(types.InlineKeyboardButton("📢 Broadcast to Users", callback_data="admin_broadcast"))
                 markup.add(types.InlineKeyboardButton("🖼️ Manage GIFs", callback_data="admin_manage_gifs"))
+            # Global admins and owner: manage section admins as well
+            markup.add(types.InlineKeyboardButton("🧩 Manage Section Admins", callback_data="admin_manage_section_admins"))
 
         for section in section_admin_sections:
             markup.add(types.InlineKeyboardButton(f"📦 Manage {section.title()} Orders", callback_data=f"admin_orders_{section}"))
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         bot.edit_message_text("🔐 **Admin Panel**\n\nHere you can manage products, view recent orders, see user statistics, and look up user purchase/payment history. Section admins see only their assigned section's orders.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_manage_section_admins")
+    def admin_manage_section_admins(call):
+        # Only owner or global admins can manage section admins
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if c.fetchone() is None:
+                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+                    return
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("➕ Add Section Admin", callback_data="owner_add_section_admin"))
+        markup.add(types.InlineKeyboardButton("➖ Remove Section Admin", callback_data="owner_remove_section_admin"))
+        markup.add(types.InlineKeyboardButton("👥 List Section Admins", callback_data="owner_list_section_admins"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
+        bot.edit_message_text("<b>🧩 Manage Section Admins</b>\n\nUse the options below to assign or remove section-specific admins.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    # =============================
+    # ===== STATUS MANAGER ======
+    # =============================
+
+    @bot.callback_query_handler(func=lambda call: call.data == "status_manager")
+    def status_manager_callback(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Only the owner can access this panel.", show_alert=True)
+            return
+
+        with open('gift_card_status.json', 'r') as f:
+            statuses = json.load(f)
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for section, status in statuses.items():
+            markup.add(
+                types.InlineKeyboardButton(f"{section.replace('_', ' ').title()}: {status.title()}", callback_data=f"status_toggle_{section}")
+            )
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
+        bot.edit_message_text("📊 <b>Status Manager</b>\n\nToggle the status of different bot sections.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("status_toggle_"))
+    def status_toggle_callback(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Only the owner can access this panel.", show_alert=True)
+            return
+
+        section = call.data.replace("status_toggle_", "")
+        
+        with open('gift_card_status.json', 'r') as f:
+            statuses = json.load(f)
+
+        current_status = statuses.get(section, "available")
+        new_status = "available"
+        if current_status == "available":
+            new_status = "coming soon"
+        elif current_status == "coming soon":
+            new_status = "undermaintenance"
+        
+        statuses[section] = new_status
+
+        with open('gift_card_status.json', 'w') as f:
+            json.dump(statuses, f, indent=4)
+
+        status_manager_callback(call)
+
+    @bot.callback_query_handler(func=lambda call: call.data == "owner_bot_stats")
+    def owner_bot_stats(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Only the owner can access this panel.", show_alert=True)
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM users")
+            user_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM users WHERE COALESCE(is_active,1)=1")
+            active_count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM orders")
+            order_count = c.fetchone()[0]
+        text = f"<b>📈 Bot Stats</b>\n\n👥 Users: <b>{user_count}</b>\n✅ Active: <b>{active_count}</b>\n📦 Orders: <b>{order_count}</b>"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Owner Panel", callback_data="owner_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     # =============================
     # ===== BROADCAST SYSTEM ======
@@ -693,7 +944,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             cursor.execute("SELECT user_id, username, referral_count, join_date FROM users WHERE referral_count > 0 ORDER BY referral_count DESC, join_date ASC LIMIT ? OFFSET ?", (page_size, page*page_size))
             rows = cursor.fetchall()
         total_pages = max(1, math.ceil(count / page_size))
-        text = f"<b>🏆 Top Referrers (Page {page+1}/{total_pages})</b>\nTotal with >=1 referral: <b>{count}</b>\n\n<b>ID</b> | <b>Username</b> | <b>Refs</b> | <b>Joined</b>\n" + ("-"*40) + "\n"
+        text = f"<b>🏆 Top Referrers (Page {page+1}/{total_pages})</b>\nTotal with >=1 referral: <b>{count}</b>\n\n<b>ID</b> | <b>Username</b> | <b>Refs</b> | <b>Joined</b> | <b>⭐</b>\n" + ("-"*46) + "\n"
         if not rows:
             text += "No users with successful referrals yet."
         else:
@@ -840,7 +1091,9 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
     @bot.callback_query_handler(func=lambda call: call.data == "admin_user_lookup")
     def admin_user_lookup_prompt(call):
         user_states[call.from_user.id] = "awaiting_user_lookup_id"
-        bot.edit_message_text("Please send the <b>User ID</b> of the user you want to look up.", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
+        bot.edit_message_text("Please send the <b>User ID</b> of the user you want to look up.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_user_lookup_id")
     def admin_user_lookup(message):
@@ -894,6 +1147,13 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
     @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_cat_menu_"))
     def category_menu_callback(call):
         category = call.data.replace("admin_cat_menu_", "", 1)
+        # Clear any add-item waiting state for this admin when navigating back to category menu
+        try:
+            st = user_states.get(call.from_user.id)
+            if isinstance(st, str) and st.startswith("awaiting_json_"):
+                user_states.pop(call.from_user.id, None)
+        except Exception:
+            pass
         category_name = CATEGORY_NAMES.get(category, "Items")
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -915,7 +1175,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         last_key = f"last_draft_{call.from_user.id}_{category}"
         if user_states.get(last_key):
             markup.add(types.InlineKeyboardButton("📝 Use Last Draft", callback_data=f"admin_use_last_{category}"))
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
+        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cancel_add_{category}"))
         if category in RESTRICTED_MEDIA_CATEGORIES:
             base = f"Please send the new item details for the **{CATEGORY_NAMES[category]}** category in JSON format (text only).\n\nRequired keys: `name`, `price`, `description`.\n\n"
             if category == "bins":
@@ -975,6 +1235,18 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                 "```json\n{\n  \"name\": \"Private Login\",\n  \"price\": 50,\n  \"description\": \"Login for a premium service.\",\n  \"delivery_type\": \"text\",\n  \"delivery_content\": \"<b>Service</b>: Example\n<b>User</b>: u\n<b>Pass</b>: p\"\n}\n```\n"
             )
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_cancel_add_"))
+    def admin_cancel_add_item(call):
+        category = call.data.replace("admin_cancel_add_", "", 1)
+        # Clear state
+        try:
+            user_states.pop(call.from_user.id, None)
+        except Exception:
+            pass
+        # Navigate back to category menu
+        call.data = f"admin_cat_menu_{category}"
+        category_menu_callback(call)
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_use_last_"))
     def admin_use_last_draft(call):
@@ -1112,6 +1384,27 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         except Exception as e:
             bot.send_message(message.chat.id, f"❌ Error: {e}")
 
+    def _parse_key_value_caption(caption: str) -> dict:
+        """Parses a multi-line key: value caption into a dictionary."""
+        data = {}
+        if not caption:
+            return data
+        for line in caption.strip().split('\n'):
+            if ':' in line:
+                key, value = line.split(':', 1)
+                key = key.strip().lower().replace(' ', '_')
+                value = value.strip()
+                if key and value:
+                    # Try to convert price to a number
+                    if key in ['price', 'quantity']:
+                        try:
+                            data[key] = int(value)
+                        except ValueError:
+                            data[key] = value # Keep as string if conversion fails
+                    else:
+                        data[key] = value
+        return data
+
     def _parse_caption_meta(caption: str):
         name, price, desc = None, None, None
         if caption:
@@ -1169,7 +1462,9 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                             item = {"name": n, "price": p, "description": d or ""}
 
                 elif message.content_type in ['document','photo','video','animation']:
-                    n, p, d = _parse_caption_meta(message.caption or "")
+                    # Use the new key-value parser for captions
+                    caption_data = _parse_key_value_caption(message.caption or "")
+
                     # Extract file_id and map to delivery type
                     if message.document:
                         file_id = message.document.file_id
@@ -1185,18 +1480,22 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                         delivery_type = 'tg_animation'
                     else:
                         raise ValueError("Unsupported media type")
-                    if not (n and p):
-                        # Sensible defaults if caption missing
-                        n = n or f"Uploaded {delivery_type.split('_')[1].title()}"
-                        p = p or 0
-                        d = d or ""
-                    item = {
-                        "name": n,
-                        "price": p,
-                        "description": d,
-                        "delivery_type": delivery_type,
-                        "delivery_content": file_id,
-                    }
+
+                    # Start with the data from the caption
+                    item = caption_data
+
+                    # Add/overwrite delivery details
+                    item['delivery_type'] = delivery_type
+                    item['delivery_content'] = file_id
+
+                    # Ensure essential keys have default values if not in caption
+                    if 'name' not in item:
+                        item['name'] = f"Uploaded {delivery_type.split('_')[1].title()}"
+                    if 'price' not in item:
+                        item['price'] = 0
+                    if 'description' not in item:
+                        item['description'] = ""
+
                 else:
                     raise ValueError("Unsupported message type")
 

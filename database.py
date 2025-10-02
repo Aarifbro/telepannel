@@ -23,6 +23,15 @@ def init_db():
             )
         ''')
 
+        # Create the admins table for global admin permissions
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY,
+                added_by INTEGER,
+                added_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         # Create the users table if it doesn't exist
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -56,6 +65,28 @@ def init_db():
         if 'is_active' not in columns:
             print("Updating database schema: Adding 'is_active' column...")
             cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
+
+        # Track user credits for the CC checker
+        if 'cc_credits' not in columns:
+            print("Updating database schema: Adding 'cc_credits' column...")
+            cursor.execute("ALTER TABLE users ADD COLUMN cc_credits INTEGER DEFAULT 0")
+
+        # Track "pro" status for unlimited CC checks
+        if 'is_pro' not in columns:
+            print("Updating database schema: Adding 'is_pro' column...")
+            cursor.execute("ALTER TABLE users ADD COLUMN is_pro INTEGER DEFAULT 0")
+
+        # Create the pro_keys table for generating access keys
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pro_keys (
+                key TEXT PRIMARY KEY,
+                is_used INTEGER DEFAULT 0,
+                used_by INTEGER,
+                used_at TEXT,
+                created_by INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
         # Create the giveaway winners table
         cursor.execute('''
@@ -105,8 +136,8 @@ def add_user(user_id, username, referrer_code=None):
                     referred_by_id = referrer[0]
             
             cursor.execute(
-                "INSERT INTO users (user_id, username, join_date, referral_code, referred_by) VALUES (?, ?, ?, ?, ?)",
-                (user_id, username, datetime.now(UTC).isoformat(), new_referral_code, referred_by_id)
+                "INSERT INTO users (user_id, username, join_date, referral_code, referred_by, cc_credits) VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, username, datetime.now(UTC).isoformat(), new_referral_code, referred_by_id, 50) # New users get 50 credits
             )
             
             if referred_by_id:
@@ -128,6 +159,75 @@ def get_user_balance(user_id):
         cursor.execute("SELECT balance_usd FROM users WHERE user_id = ?", (user_id,))
         result = cursor.fetchone()
         return result[0] if result else 0.0
+
+def get_user_credits(user_id):
+    """Fetches the current CC checker credits for a given user."""
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT cc_credits, is_pro FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        if result:
+            return {"credits": result[0], "is_pro": bool(result[1])}
+        return {"credits": 0, "is_pro": False}
+
+def update_user_credits(user_id, amount_change):
+    """
+    Updates a user's CC credits by a given amount (can be positive or negative).
+    Does not affect pro users. Returns the new credit balance.
+    """
+    user_status = get_user_credits(user_id)
+    if user_status["is_pro"]:
+        return "unlimited" # Pro users are not affected by credit changes
+
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET cc_credits = cc_credits + ? WHERE user_id = ?", (amount_change, user_id))
+        conn.commit()
+        cursor.execute("SELECT cc_credits FROM users WHERE user_id = ?", (user_id,))
+        new_credits = cursor.fetchone()[0]
+        return new_credits
+
+def generate_pro_key(admin_id):
+    """Generates a new, unique key for pro access and stores it."""
+    import uuid
+    new_key = f"pro-{uuid.uuid4()}"
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO pro_keys (key, created_by) VALUES (?, ?)", (new_key, admin_id))
+        conn.commit()
+    return new_key
+
+def get_all_pro_keys():
+    """Retrieves all generated pro keys and their status."""
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT key, is_used, used_by, used_at FROM pro_keys")
+        return cursor.fetchall()
+
+def validate_and_use_pro_key(key, user_id):
+    """
+    Validates a pro key. If it's valid and unused, it grants the user pro access
+    and marks the key as used.
+    """
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT key, is_used FROM pro_keys WHERE key = ?", (key,))
+        result = cursor.fetchone()
+
+        if not result:
+            return "invalid"
+        
+        if result[1]: # is_used
+            return "used"
+
+        # Key is valid and unused, grant pro access
+        cursor.execute("UPDATE users SET is_pro = 1 WHERE user_id = ?", (user_id,))
+        cursor.execute(
+            "UPDATE pro_keys SET is_used = 1, used_by = ?, used_at = ? WHERE key = ?",
+            (user_id, datetime.now(UTC).isoformat(), key)
+        )
+        conn.commit()
+        return "success"
 
 def update_user_balance(user_id, amount_change):
     """

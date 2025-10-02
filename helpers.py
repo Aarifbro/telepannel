@@ -1,8 +1,10 @@
+from telebot import types
 import os
 import json
 import random
+import sqlite3
 from typing import Dict, List
-from config import FORCE_CHANNEL_IDS, ADMIN_ID, WELCOME_GIF, SUCCESS_GIF, REJECT_GIF, PENDING_GIF, USE_GIF_URL_FALLBACK
+from config import FORCE_CHANNEL_IDS, ADMIN_ID, WELCOME_GIF, SUCCESS_GIF, REJECT_GIF, PENDING_GIF, USE_GIF_URL_FALLBACK, DB_NAME
 
 def check_force_join(bot, user_id):
     """
@@ -133,6 +135,103 @@ def send_random_animation(bot, chat_id: int, kind: str, caption: str = None, rep
                 bot.send_message(chat_id, caption, reply_markup=reply_markup, parse_mode=parse_mode)
             except Exception:
                 pass
+
+def send_main_menu(bot, chat_id, text, message_id=None):
+    """
+    Sends the main menu keyboard to the user.
+    Can either edit an existing message or send a new one.
+    """
+    markup = types.InlineKeyboardMarkup(row_width=2)
+
+    # Determine roles early (owner/global admin/section admin)
+    is_owner = chat_id == ADMIN_ID
+    is_admin = is_owner
+    has_section_admin = False
+    if not is_admin:
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (chat_id,))
+                is_admin = c.fetchone() is not None
+                if not is_admin:
+                    c.execute("SELECT 1 FROM section_admins WHERE user_id = ?", (chat_id,))
+                    has_section_admin = c.fetchone() is not None
+        except Exception:
+            is_admin = False
+            has_section_admin = False
+    
+    # First Row
+    markup.add(
+        types.InlineKeyboardButton("💳 CC Checker", callback_data="cc_checker_v2"),
+        types.InlineKeyboardButton("💳 CC", callback_data="cc_menu")
+    )
+
+    # BINs Row (ensure BINs are visible on main menu)
+    markup.add(
+        types.InlineKeyboardButton("🔢 BINs", callback_data="bin_menu")
+    )
+    
+    # Second Row
+    markup.add(
+        types.InlineKeyboardButton("🎁 Gift Cards", callback_data="giftcards_menu"),
+        types.InlineKeyboardButton("💾 Dumps", callback_data="dumps_menu")
+    )
+
+    # Third Row
+    markup.add(
+        types.InlineKeyboardButton("🛡️ Buy Hacks", callback_data="hacks_menu"),
+        types.InlineKeyboardButton("💡 Methods", callback_data="method_menu")
+    )
+
+    # Fourth Row
+    markup.add(
+        types.InlineKeyboardButton("📦 My Orders", callback_data="my_orders"),
+        types.InlineKeyboardButton("👤 My Profile", callback_data="my_profile")
+    )
+
+    # Fifth Row
+    markup.add(
+        types.InlineKeyboardButton("💰 Add Funds", callback_data="add_funds"),
+        types.InlineKeyboardButton("🧠 AI Smart Search", callback_data="ai_search")
+    )
+
+    # Sixth Row: Show Support only to regular users (not owner/global admin)
+    if not (is_owner or is_admin):
+        markup.add(
+            types.InlineKeyboardButton("📞 Support", callback_data="contact_admins")
+        )
+
+    # Owner + Admin buttons
+    # (roles already determined above)
+
+    if is_owner and is_admin:
+        # Put Owner + Admin on one row for the owner
+        owner_btn = types.InlineKeyboardButton("👑 Owner Panel", callback_data="owner_panel")
+        admin_btn = types.InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_panel")
+        markup.row(owner_btn, admin_btn)
+        # Status Manager button for owner on main menu
+        markup.add(types.InlineKeyboardButton("📊 Status", callback_data="status_manage"))
+    elif is_owner:
+        markup.add(types.InlineKeyboardButton("👑 Owner Panel", callback_data="owner_panel"))
+        markup.add(types.InlineKeyboardButton("📊 Status", callback_data="status_manage"))
+    elif is_admin:
+        markup.add(types.InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_panel"))
+    elif has_section_admin:
+        markup.add(types.InlineKeyboardButton("🛠️ Admin Panel", callback_data="admin_panel"))
+
+    try:
+        if message_id:
+            bot.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode="Markdown")
+        else:
+            bot.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Error sending main menu: {e}")
+        # Fallback for safety
+        if not message_id:
+            try:
+                bot.send_message(chat_id, "Main Menu", reply_markup=markup)
+            except Exception as fallback_e:
+                print(f"Fallback send_message failed: {fallback_e}")
 
 def get_country_list():
     """

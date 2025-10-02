@@ -32,9 +32,8 @@ def register_bin_handlers(bot):
         
         if not bins:
             bot.send_message(user_id, "🙁 No BINs are available at the moment.")
-            # Import locally to avoid circular import issues
-            from main import send_main_menu
-            send_main_menu(user_id, "👇 Please choose an option from the menu.")
+            from helpers import send_main_menu
+            send_main_menu(bot, user_id, "👇 Please choose an option from the menu.")
             return
 
         bot.send_message(user_id, "📦 **Available BINs**\nClick 'Buy' on any BIN from the list below to purchase.")
@@ -76,7 +75,6 @@ def register_bin_handlers(bot):
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
-        # Import locally to avoid circular import issues
-        from main import send_main_menu
-        send_main_menu(call.message.chat.id, "👇 Please choose an option from the menu.")
+        from helpers import send_main_menu
+        send_main_menu(bot, call.message.chat.id, "👇 Please choose an option from the menu.")
 
