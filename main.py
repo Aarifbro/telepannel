@@ -215,7 +215,7 @@ def register_all_handlers(bot_instance):
         m_matches, b_matches, mb_matches = _search_methods_and_bins(keyword)
         if not m_matches and not b_matches and not mb_matches:
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_select"))
+            markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_menu"))
             bot_instance.edit_message_text(f"<b>No matches found for</b> <code>{keyword}</code>.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
             return
         text = f"<b>Results for</b> <code>{keyword}</code>\n\n"
@@ -240,7 +240,7 @@ def register_all_handlers(bot_instance):
             name = item.get("name", "Bundle")
             price = item.get("price", "?")
             markup.add(types.InlineKeyboardButton(f"💎 Buy Bundle: {name} - ${price}", callback_data=f"buy_idx_method_bins_{idx}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_select"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_menu"))
         bot_instance.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("bins_methods_brand_"))
