@@ -112,6 +112,19 @@ def init_db():
                 item_details TEXT
             )
         ''')
+        
+        # Create support sessions table (for in-bot support chat)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS support_sessions (
+                session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                admin_id INTEGER,
+                status TEXT NOT NULL,
+                started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                ended_at TEXT
+            )
+        ''')
         conn.commit()
 
 def add_user(user_id, username, referrer_code=None):

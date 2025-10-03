@@ -465,8 +465,11 @@ Share this unique link with your friends. Every time someone starts the bot usin
 
     @bot.callback_query_handler(func=lambda call: call.data == "support")
     def support_callback(call):
-        """Displays the new interactive AI Support menu."""
-        text = "🤖 **AI Support Assistant**\n\nHow can I help you today? Please choose a common topic below or type your question."
+        """Displays Support menu with AI answers and in-bot live chat (no admin IDs exposed)."""
+        text = (
+            "🤖 **AI Support Assistant**\n\n"
+            "How can I help you today? Choose a topic or start a live chat with support."
+        )
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton("💳 Payment Issues", callback_data="support_topic_payment"),
@@ -474,11 +477,10 @@ Share this unique link with your friends. Every time someone starts the bot usin
             types.InlineKeyboardButton("💰 Adding Funds", callback_data="support_topic_funds"),
             types.InlineKeyboardButton("🤔 Other", callback_data="support_topic_other")
         )
+        markup.add(types.InlineKeyboardButton("🗣️ Start Live Chat", callback_data="support_start_chat"))
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
-        
-        # Set the state to await a text message for a custom query
+        # Set AI query state for free text
         user_states[call.from_user.id] = "awaiting_support_query"
-        
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith("support_topic_"))
@@ -534,29 +536,138 @@ Share this unique link with your friends. Every time someone starts the bot usin
         
         bot.send_message(user_id, response, reply_markup=markup, parse_mode="Markdown")
 
-    @bot.callback_query_handler(func=lambda call: call.data == "contact_admins")
-    def contact_admins_callback(call):
-        """Displays the list of admins to contact."""
+    # --- Live Support Chat (no admin ID exposure) ---
+    @bot.callback_query_handler(func=lambda call: call.data == "support_start_chat")
+    def support_start_chat(call):
+        user_id = call.from_user.id
         with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            # Fetch all global admins, excluding the owner
-            cursor.execute("SELECT user_id FROM admins WHERE user_id != ?", (ADMIN_ID,))
-            admins = cursor.fetchall()
-
-        # Build user profile lines and admin IDs only
-        user_profile = f"[`Profile`](tg://user?id={call.from_user.id}) | `ID: {call.from_user.id}`"
-        text = "🛠️ **Contact Support**\n\nPlease copy one of the admin IDs and DM on Telegram.\nTo help us assist you, include your user ID and a short description.\n\n**Your:** " + user_profile
-
-        admin_list_text = "\n\n**Support Admin IDs:**\n"
-        if not admins:
-            admin_list_text += "No global admins configured."
-        else:
-            for i, admin in enumerate(admins, 1):
-                admin_list_text += f"• `{admin[0]}`\n"
-
+            c = conn.cursor()
+            row = c.execute("SELECT session_id, status FROM support_sessions WHERE user_id = ? AND status IN ('open','assigned') ORDER BY session_id DESC LIMIT 1", (user_id,)).fetchone()
+            if row:
+                session_id, status = row
+            else:
+                c.execute("INSERT INTO support_sessions (user_id, status) VALUES (?, 'open')", (user_id,))
+                conn.commit()
+                session_id = c.lastrowid
+        user_states[user_id] = f"support_chat_user_{session_id}"
         markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔚 End Chat", callback_data=f"support_end_{session_id}"))
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
-        bot.edit_message_text(text + admin_list_text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        bot.edit_message_text(
+            "💬 **Live Chat Started**\n\nA support admin will join shortly. Please type your message.",
+            call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown"
+        )
+
+    @bot.message_handler(func=lambda m: isinstance(user_states.get(m.from_user.id, ''), str) and user_states.get(m.from_user.id, '').startswith("support_chat_user_"))
+    def handle_user_support_chat(message):
+        user_id = message.from_user.id
+        state = user_states.get(user_id, '')
+        try:
+            session_id = int(state.split('_')[-1])
+        except Exception:
+            return
+        # Notify all global admins about new/unassigned message
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            sess = c.execute("SELECT admin_id, status FROM support_sessions WHERE session_id = ?", (session_id,)).fetchone()
+            if not sess:
+                return
+            admin_id, status = sess
+            if not admin_id:
+                # Broadcast to admins to take the chat
+                admin_ids = [ADMIN_ID]
+                try:
+                    c2 = conn.cursor(); c2.execute("SELECT user_id FROM admins"); admin_ids += [r[0] for r in c2.fetchall()]
+                except Exception:
+                    pass
+                text = f"🆕 New support chat from user <code>{user_id}</code> (session #{session_id}). Tap to join."
+                join_markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("👋 Join Chat", callback_data=f"support_admin_join_{session_id}"))
+                for aid in set(admin_ids):
+                    try:
+                        bot.send_message(aid, text, parse_mode="HTML", reply_markup=join_markup)
+                    except Exception:
+                        pass
+            else:
+                # Forward to assigned admin
+                try:
+                    bot.copy_message(admin_id, from_chat_id=message.chat.id, message_id=message.message_id)
+                except Exception:
+                    pass
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("support_admin_join_"))
+    def support_admin_join(call):
+        # Owner or global admins only
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor(); c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if c.fetchone() is None:
+                    bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+                    return
+        try:
+            session_id = int(call.data.split('_')[-1])
+        except Exception:
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            sess = c.execute("SELECT user_id, admin_id, status FROM support_sessions WHERE session_id = ?", (session_id,)).fetchone()
+            if not sess:
+                bot.answer_callback_query(call.id, "Session not found", show_alert=True)
+                return
+            user_id, current_admin, status = sess
+            if current_admin and current_admin != call.from_user.id:
+                bot.answer_callback_query(call.id, "Already assigned", show_alert=True)
+                return
+            c.execute("UPDATE support_sessions SET admin_id = ?, status = 'assigned', updated_at = CURRENT_TIMESTAMP WHERE session_id = ?", (call.from_user.id, session_id))
+            conn.commit()
+        # Notify admin and user
+        bot.answer_callback_query(call.id, f"Joined chat #{session_id}")
+        try:
+            bot.send_message(call.from_user.id, f"✅ You joined support chat #{session_id}. Reply here to talk to the user. Send /end to close.")
+            bot.send_message(user_id, "🟢 A support admin joined the chat. You can continue messaging here.")
+        except Exception:
+            pass
+        # Put admin into chat state
+        user_states[call.from_user.id] = f"support_chat_admin_{session_id}"
+
+    @bot.message_handler(func=lambda m: isinstance(user_states.get(m.from_user.id, ''), str) and user_states.get(m.from_user.id, '').startswith("support_chat_admin_"))
+    def handle_admin_support_chat(message):
+        admin_id = message.from_user.id
+        try:
+            session_id = int(user_states[admin_id].split('_')[-1])
+        except Exception:
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            sess = c.execute("SELECT user_id, status FROM support_sessions WHERE session_id = ?", (session_id,)).fetchone()
+            if not sess:
+                return
+            user_id, status = sess
+        # Forward admin message to user
+        try:
+            bot.copy_message(user_id, from_chat_id=message.chat.id, message_id=message.message_id)
+        except Exception:
+            pass
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("support_end_"))
+    def support_end_chat(call):
+        try:
+            session_id = int(call.data.split('_')[-1])
+        except Exception:
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("UPDATE support_sessions SET status = 'closed', ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?", (session_id,))
+            conn.commit()
+        # Clear states for both sides
+        for uid, st in list(user_states.items()):
+            if isinstance(st, str) and st.endswith(f"_{session_id}") and st.startswith("support_chat_"):
+                user_states.pop(uid, None)
+        # Acknowledge
+        bot.answer_callback_query(call.id, "Chat ended")
+        try:
+            bot.edit_message_text("Chat ended.", call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
 
     @bot.callback_query_handler(func=lambda call: call.data == "rules")
     def rules_callback(call):
