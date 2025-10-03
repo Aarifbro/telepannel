@@ -163,24 +163,19 @@ def send_main_menu(bot, chat_id, text, message_id=None):
     # First Row
     markup.add(
         types.InlineKeyboardButton("💳 CC Checker", callback_data="cc_checker_v2"),
-        types.InlineKeyboardButton("💳 CC", callback_data="cc_menu")
+        types.InlineKeyboardButton("�️ CC Shop", callback_data="cc_menu")
     )
 
-    # BINs Row (ensure BINs are visible on main menu)
+    # Second Row (pair combined Tools with Gift Cards)
     markup.add(
-        types.InlineKeyboardButton("🔢 BINs", callback_data="bin_menu")
-    )
-    
-    # Second Row
-    markup.add(
-        types.InlineKeyboardButton("🎁 Gift Cards", callback_data="giftcards_menu"),
-        types.InlineKeyboardButton("💾 Dumps", callback_data="dumps_menu")
+        types.InlineKeyboardButton("� BINs • Methods", callback_data="bins_methods_menu"),
+        types.InlineKeyboardButton("🎁 Gift Cards", callback_data="giftcards_menu")
     )
 
     # Third Row
     markup.add(
-        types.InlineKeyboardButton("🛡️ Buy Hacks", callback_data="hacks_menu"),
-        types.InlineKeyboardButton("💡 Methods", callback_data="method_menu")
+        types.InlineKeyboardButton("�️ Hacks", callback_data="hacks_menu"),
+        types.InlineKeyboardButton("� Dumps", callback_data="dumps_menu")
     )
 
     # Fourth Row
@@ -192,13 +187,13 @@ def send_main_menu(bot, chat_id, text, message_id=None):
     # Fifth Row
     markup.add(
         types.InlineKeyboardButton("💰 Add Funds", callback_data="add_funds"),
-        types.InlineKeyboardButton("🧠 AI Smart Search", callback_data="ai_search")
+        types.InlineKeyboardButton("🧠 AI Search", callback_data="ai_search")
     )
 
     # Sixth Row: Show Support only to regular users (not owner/global admin)
     if not (is_owner or is_admin):
         markup.add(
-            types.InlineKeyboardButton("📞 Support", callback_data="contact_admins")
+            types.InlineKeyboardButton("� Support", callback_data="contact_admins")
         )
 
     # Owner + Admin buttons

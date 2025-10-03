@@ -832,13 +832,13 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             types.InlineKeyboardButton("➕ Add to Pending", callback_data="gif_add_pending"),
         )
         markup.add(
-            types.InlineKeyboardButton("� Bulk Add Welcome", callback_data="gif_add_bulk_welcome"),
+            types.InlineKeyboardButton("📥 Bulk Add Welcome", callback_data="gif_add_bulk_welcome"),
             types.InlineKeyboardButton("📥 Bulk Add Success", callback_data="gif_add_bulk_success"),
             types.InlineKeyboardButton("📥 Bulk Add Reject", callback_data="gif_add_bulk_reject"),
             types.InlineKeyboardButton("📥 Bulk Add Pending", callback_data="gif_add_bulk_pending"),
         )
         markup.add(
-            types.InlineKeyboardButton("�📊 Refresh Counts", callback_data="admin_manage_gifs"),
+            types.InlineKeyboardButton("📊 Refresh Counts", callback_data="admin_manage_gifs"),
             types.InlineKeyboardButton("🧹 Clear All", callback_data="gif_clear_all"),
         )
         markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))

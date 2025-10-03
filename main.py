@@ -165,6 +165,104 @@ def register_all_handlers(bot_instance):
         
         bot_instance.edit_message_text(text, user_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
+    # --- Combined BINs + Methods menu ---
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "bins_methods_menu")
+    def bins_methods_menu(call):
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("🔎 Select", callback_data="bins_methods_select"))
+        markup.add(types.InlineKeyboardButton("⌨️ Enter", callback_data="bins_methods_enter"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
+        bot_instance.edit_message_text("<b>BINs • Methods</b>\n\nChoose an option:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "bins_methods_select")
+    def bins_methods_select(call):
+        """Shows popular brand targets to pair Methods + BINs."""
+        brands = [
+            ("netflix", "🎬 Netflix"),
+            ("amazon", "🛒 Amazon"),
+            ("spotify", "🎵 Spotify"),
+            ("disney", "🐭 Disney+"),
+            ("hulu", "🎥 Hulu"),
+            ("uber", "🚕 Uber"),
+        ]
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for key, label in brands:
+            markup.add(types.InlineKeyboardButton(label, callback_data=f"bins_methods_brand_{key}"))
+        markup.add(
+            types.InlineKeyboardButton("⌨️ Enter Custom", callback_data="bins_methods_enter"),
+            types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_menu")
+        )
+        bot_instance.edit_message_text("<b>Choose a target</b>\n\nWe'll show available Method + BIN options.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    def _search_methods_and_bins(keyword: str):
+        """Find top matches in Methods and BINs for a given keyword (case-insensitive)."""
+        kw = keyword.lower().strip()
+        methods = get_products_from_cache("methods")
+        bins = get_products_from_cache("bins")
+        def _text_of(item: dict):
+            return f"{item.get('name','')} {item.get('description','')} {item.get('info','')}".lower()
+        def _text_of_bin(item: dict):
+            return f"{item.get('name','')} {item.get('description','')} {item.get('country','')} {item.get('info','')} {item.get('bank','')}".lower()
+        method_matches = [(i, it) for i, it in enumerate(methods) if kw and kw in _text_of(it)]
+        bin_matches = [(i, it) for i, it in enumerate(bins) if kw and kw in _text_of_bin(it)]
+        return method_matches[:5], bin_matches[:5]
+
+    def _render_combo_results(call, keyword: str):
+        m_matches, b_matches = _search_methods_and_bins(keyword)
+        if not m_matches and not b_matches:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_select"))
+            bot_instance.edit_message_text(f"<b>No matches found for</b> <code>{keyword}</code>.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+            return
+        text = f"<b>Results for</b> <code>{keyword}</code>\n\n"
+        if m_matches:
+            text += "<b>Methods</b>\n"
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for idx, item in m_matches:
+            name = item.get("name", "Method")
+            price = item.get("price", "?")
+            markup.add(types.InlineKeyboardButton(f"🧰 Buy Method: {name} - ${price}", callback_data=f"buy_idx_methods_{idx}"))
+        if b_matches:
+            if m_matches:
+                text += "\n"
+            text += "<b>BINs</b>\n"
+        for idx, item in b_matches:
+            name = item.get("name") or (item.get("country", "") + " BIN").strip() or "BIN"
+            price = item.get("price", "?")
+            markup.add(types.InlineKeyboardButton(f"🔢 Buy BIN: {name} - ${price}", callback_data=f"buy_idx_bins_{idx}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_select"))
+        bot_instance.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("bins_methods_brand_"))
+    def bins_methods_brand(call):
+        key = call.data.replace("bins_methods_brand_", "")
+        _render_combo_results(call, key)
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "bins_methods_enter")
+    def bins_methods_enter(call):
+        user_states[call.from_user.id] = "awaiting_bins_methods_query"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_menu"))
+        bot_instance.edit_message_text(
+            "<b>Enter a target</b>\n\nType the site/brand you want (e.g., <i>Netflix</i>, <i>Amazon</i>, <i>Spotify</i>).",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+
+    @bot_instance.message_handler(func=lambda m: user_states.get(m.from_user.id) == "awaiting_bins_methods_query")
+    def bins_methods_enter_query(message):
+        try:
+            del user_states[message.from_user.id]
+        except Exception:
+            pass
+        # Create a temporary message to anchor the edit flow
+        sent = bot_instance.send_message(message.chat.id, "Searching...")
+        # Build a mock call-like object with the message for edit compatibility
+        call_like = types.CallbackQuery(id=None, from_user=message.from_user, data=None, chat_instance=None, message=sent, json_string=None)
+        _render_combo_results(call_like, message.text.strip())
+
     # --- My Orders (user view) ---
     @bot_instance.callback_query_handler(func=lambda call: call.data == "my_orders")
     def my_orders_callback(call):
@@ -182,12 +280,12 @@ def register_all_handlers(bot_instance):
             print(f"Error fetching orders for {user_id}: {e}")
 
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("\u2b05\ufe0f Back to Main Menu", callback_data="main_menu"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
 
         if not orders:
-            text = "\ud83d\udce6 <b>My Orders</b>\n\nYou haven't placed any orders yet."
+            text = "📦 <b>My Orders</b>\n\nYou haven't placed any orders yet."
         else:
-            text = "\ud83d\udce6 <b>My Orders</b>\n\n<code>Order ID | Item | Price | Status | Date</code>\n" + ("-"*40) + "\n"
+            text = "📦 <b>My Orders</b>\n\n<code>Order ID | Item | Price | Status | Date</code>\n" + ("-"*40) + "\n"
             for o in orders:
                 oid, name, price, status, created = o
                 date_short = created[:10] if created else "-"
@@ -381,9 +479,12 @@ def register_all_handlers(bot_instance):
         referrer_code = parts[1] if len(parts) > 1 else None
         add_user(user_id, username, referrer_code)
         intro_text = (
-            "🎉 <b>Welcome to the Premium Shop</b> 💜👑\n"
-            "✨ <b>Everything you need in one place.</b>\n\n"
-            "👇 <b>Use the buttons below to navigate.</b>"
+            "💎 <b>𝗣𝗿𝗲𝗺𝗶𝘂𝗺 𝗦𝗵𝗼𝗽</b> \n"
+            "✨ <i>All‑in‑one • Fast • Secure</i>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🏷️ CC • BINs • Methods • Gift Cards\n"
+            "⚡ Instant delivery • 🎯 Smart search • 💼 Wallet\n\n"
+            "👇 <b>Tap a category below to begin</b>"
         )
         if not check_force_join(bot_instance, user_id):
             from config import FORCE_CHANNEL_LINKS
@@ -391,7 +492,10 @@ def register_all_handlers(bot_instance):
             for link in FORCE_CHANNEL_LINKS:
                 markup.add(types.InlineKeyboardButton("🔗 Join Channel/Group", url=link))
             markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
-            force_join_text = f"{intro_text}\n\n⚠️ To get full access, you must first join all our partner channels/groups."
+            force_join_text = (
+                f"{intro_text}\n\n"
+                "⚠️ <b>Access required</b> — Please join our partner channels/groups first."
+            )
             try:
                 send_random_animation(bot_instance, user_id, kind="welcome", caption=force_join_text, reply_markup=markup, parse_mode="HTML")
             except Exception:
