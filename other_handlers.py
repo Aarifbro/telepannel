@@ -16,6 +16,7 @@ CATEGORY_NAMES = {
     "gift_cards": "Gift Cards",
     "rdp": "RDPs",
     "methods": "Methods",
+    "method_bins": "BINs + Methods",
     "other": "Other Items",
     "dumps": "Dumps",
     "phishing_kits": "Phishing Kits"
@@ -34,11 +35,11 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
         item from the cache, and then shows the payment options to the user.
         """
         try:
-            # e.g., "buy_idx_methods_2" -> ["buy", "idx", "methods", "2"]
-            parts = call.data.split('_')
-            category_key = parts[2]
-            item_index = int(parts[3])
-            
+            # Support categories with underscores, e.g., method_bins
+            payload = call.data.replace("buy_idx_", "", 1)
+            category_key, index_str = payload.rsplit('_', 1)
+            item_index = int(index_str)
+
             products = get_products_from_cache(category_key)
             
             if item_index >= len(products):
@@ -48,9 +49,16 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
             item = products[item_index]
             price = item.get("price", 0)
             name = item.get("name", "Unnamed Item")
-            
-            # The last part of the callback is the "back" menu (e.g., "method_menu")
-            back_menu_callback = f"{category_key}_menu"
+
+            # Map back callback safely (fix for bins+methods combined flow)
+            back_map = {
+                "methods": "method_menu",
+                "rdp": "rdp_menu",
+                "other": "other_menu",
+                "method_bins": "method_bins_menu",
+                "bins": "bins_methods_menu",
+            }
+            back_menu_callback = back_map.get(category_key, "main_menu")
             
             # Hand off to the payment handler
             from payment_handler import show_payment_options
@@ -447,6 +455,10 @@ Share this unique link with your friends. Every time someone starts the bot usin
     def method_menu(call):
         create_dynamic_product_menu(call, "methods")
     
+    @bot.callback_query_handler(func=lambda call: call.data == "method_bins_menu")
+    def method_bins_menu(call):
+        create_dynamic_product_menu(call, "method_bins")
+
     @bot.callback_query_handler(func=lambda call: call.data == "other_menu")
     def other_menu(call):
         create_dynamic_product_menu(call, "other")
@@ -1160,7 +1172,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             types.InlineKeyboardButton("➕ Add Item", callback_data=f"admin_add_{category}"),
             types.InlineKeyboardButton("➖ Remove Item", callback_data=f"admin_remove_list_{category}")
         )
-        if category in {"methods", "other", "dumps", "rdp", "phishing_kits"}:
+        if category in {"methods", "method_bins", "other", "dumps", "rdp", "phishing_kits"}:
             markup.add(types.InlineKeyboardButton("🧭 Add via Wizard", callback_data=f"admin_addwiz_{category}"))
         markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_manage_products"))
         bot.edit_message_text(f"🔧 **Manage {category_name}**\n\nWhat would you like to do?", call.message.chat.id, call.message.message_id, reply_markup=markup)
@@ -1287,7 +1299,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             parse_mode="HTML",
         )
 
-    @bot.message_handler(func=lambda m: _is_wizard(m.from_user.id) and user_states[m.from_user.id].get("step") in ("name","price","quantity","description"), content_types=['text'])
+    @bot.message_handler(func=lambda m: _is_wizard(m.from_user.id) and user_states[m.from_user.id].get("step") in ("name","price","quantity","description","bin"), content_types=['text'])
     def add_item_wizard_text_steps(message):
         st = user_states.get(message.from_user.id)
         step = st.get("step")
@@ -1314,14 +1326,26 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                 if qty_val < 0:
                     raise ValueError("Quantity must be >= 0")
                 data["quantity"] = qty_val
+                # For method_bins, ask for a BIN before description/content
+                if category == "method_bins":
+                    st["step"] = "bin"
+                    bot.send_message(message.chat.id, "Step 4/6 — Send the <b>BIN</b> (e.g., 456789).", parse_mode="HTML")
+                else:
+                    st["step"] = "description"
+                    bot.send_message(message.chat.id, "Step 4/5 — Send the <b>Description</b> (text).", parse_mode="HTML")
+            elif step == "bin":
+                # Basic normalization for BIN value
+                data["bin"] = message.text.strip().replace(" ", "")
                 st["step"] = "description"
-                bot.send_message(message.chat.id, "Step 4/5 — Send the <b>Description</b> (text).", parse_mode="HTML")
+                bot.send_message(message.chat.id, "Step 5/6 — Send the <b>Description</b> (text).", parse_mode="HTML")
             elif step == "description":
                 data["description"] = message.text.strip()
                 st["step"] = "content"
+                # Step label depends if category is method_bins
+                final_step = "6/6" if category == "method_bins" else "5/5"
                 bot.send_message(
                     message.chat.id,
-                    "Step 5/5 — Send the <b>Content</b>:\n- Paste a <b>link</b> (starts with http/https),\n- Or write <b>text</b>,\n- Or send a <b>file/photo/video/animation</b>.",
+                    f"Step {final_step} — Send the <b>Content</b>:\n- Paste a <b>link</b> (starts with http/https),\n- Or write <b>text</b>,\n- Or send a <b>file/photo/video/animation</b>.",
                     parse_mode="HTML",
                 )
         except ValueError as ve:
@@ -1371,6 +1395,9 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                 "delivery_type": delivery_type,
                 "delivery_content": delivery_content,
             }
+            # Save BIN for bundle category
+            if st.get("category") == "method_bins" and data.get("bin"):
+                item["bin"] = data.get("bin")
             if "quantity" in data:
                 item["quantity"] = data["quantity"]
 
@@ -1505,6 +1532,9 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             except Exception:
                 pass
 
+            # Ensure category key exists
+            if category not in products_data:
+                products_data[category] = []
             products_data[category].append(item)
             save_products_to_file_and_reload(products_data)
             bot.send_message(message.chat.id, f"✅ Successfully added new item to <b>{CATEGORY_NAMES[category]}</b>.", parse_mode="HTML")

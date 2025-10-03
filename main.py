@@ -109,7 +109,7 @@ def load_all_products_into_cache():
         print("✅ Products loaded into in-memory cache.")
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"🔴 Could not load products.json: {e}. Using empty cache.")
-        products_cache = {"bins": [], "ready_ccs": [], "gift_cards": [], "rdp": [], "methods": [], "other": []}
+        products_cache = {"bins": [], "ready_ccs": [], "gift_cards": [], "rdp": [], "methods": [], "method_bins": [], "other": []}
 
 def get_products_from_cache(category=None):
     """Returns all products or products from a specific category from the cache."""
@@ -195,21 +195,25 @@ def register_all_handlers(bot_instance):
         bot_instance.edit_message_text("<b>Choose a target</b>\n\nWe'll show available Method + BIN options.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     def _search_methods_and_bins(keyword: str):
-        """Find top matches in Methods and BINs for a given keyword (case-insensitive)."""
+        """Find top matches in Methods, BINs, and Bundles for a given keyword (case-insensitive)."""
         kw = keyword.lower().strip()
         methods = get_products_from_cache("methods")
         bins = get_products_from_cache("bins")
+        bundles = get_products_from_cache("method_bins")
         def _text_of(item: dict):
             return f"{item.get('name','')} {item.get('description','')} {item.get('info','')}".lower()
         def _text_of_bin(item: dict):
             return f"{item.get('name','')} {item.get('description','')} {item.get('country','')} {item.get('info','')} {item.get('bank','')}".lower()
+        def _text_of_bundle(item: dict):
+            return f"{item.get('name','')} {item.get('description','')} {item.get('bin','')}".lower()
         method_matches = [(i, it) for i, it in enumerate(methods) if kw and kw in _text_of(it)]
         bin_matches = [(i, it) for i, it in enumerate(bins) if kw and kw in _text_of_bin(it)]
-        return method_matches[:5], bin_matches[:5]
+        bundle_matches = [(i, it) for i, it in enumerate(bundles) if kw and kw in _text_of_bundle(it)]
+        return method_matches[:5], bin_matches[:5], bundle_matches[:5]
 
     def _render_combo_results(call, keyword: str):
-        m_matches, b_matches = _search_methods_and_bins(keyword)
-        if not m_matches and not b_matches:
+        m_matches, b_matches, mb_matches = _search_methods_and_bins(keyword)
+        if not m_matches and not b_matches and not mb_matches:
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_select"))
             bot_instance.edit_message_text(f"<b>No matches found for</b> <code>{keyword}</code>.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
@@ -230,6 +234,12 @@ def register_all_handlers(bot_instance):
             name = item.get("name") or (item.get("country", "") + " BIN").strip() or "BIN"
             price = item.get("price", "?")
             markup.add(types.InlineKeyboardButton(f"🔢 Buy BIN: {name} - ${price}", callback_data=f"buy_idx_bins_{idx}"))
+        if mb_matches:
+            text += "\n<b>Bundles (BIN + Method)</b>\n"
+        for idx, item in mb_matches:
+            name = item.get("name", "Bundle")
+            price = item.get("price", "?")
+            markup.add(types.InlineKeyboardButton(f"💎 Buy Bundle: {name} - ${price}", callback_data=f"buy_idx_method_bins_{idx}"))
         markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_select"))
         bot_instance.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
