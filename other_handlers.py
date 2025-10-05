@@ -1025,26 +1025,20 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         text = (
             "📦 <b>Product Management</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Manage all store products and categories:\n\n"
-            "🛍️ <b>Add Products:</b> Add new items to categories\n"
-            "📋 <b>View Products:</b> Browse current inventory\n"
-            "✏️ <b>Edit Products:</b> Modify existing items\n"
-            "🗑️ <b>Delete Products:</b> Remove items from store\n"
-            "📊 <b>Category Stats:</b> View category statistics"
+            "Manage your store products by category:\n\n"
+            "🛍️ <b>Manage by Category:</b> Add, edit, or remove products\n"
+            "📋 <b>Browse Inventory:</b> View all products by category\n"
+            "� <b>Store Analytics:</b> Category statistics and insights\n\n"
+            "<i>Select an action to get started:</i>"
         )
         
-        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("➕ Add Product", callback_data="admin_manage_products"),
-            types.InlineKeyboardButton("📋 View All", callback_data="admin_view_products")
+            types.InlineKeyboardButton("🛍️ Manage Products by Category", callback_data="admin_manage_products")
         )
         markup.add(
-            types.InlineKeyboardButton("✏️ Edit Product", callback_data="admin_edit_products"),
-            types.InlineKeyboardButton("🗑️ Delete Product", callback_data="admin_delete_products")
-        )
-        markup.add(
-            types.InlineKeyboardButton("📊 Category Stats", callback_data="admin_product_stats"),
-            types.InlineKeyboardButton("🔄 Bulk Operations", callback_data="admin_bulk_products")
+            types.InlineKeyboardButton("📋 Browse Product Inventory", callback_data="admin_browse_inventory"),
+            types.InlineKeyboardButton("📊 View Store Statistics", callback_data="admin_store_stats")
         )
         markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
         
@@ -1164,12 +1158,172 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    # Add some missing menu handlers that were referenced
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_view_products")
-    def admin_view_products(call):
-        # Redirect to existing manage products function
-        call.data = "admin_manage_products"
-        manage_products_callback(call)
+    # Add handlers for reorganized product management menu
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_browse_inventory")
+    def admin_browse_inventory(call):
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if c.fetchone() is None:
+                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+                    return
+        
+        # Load products and show inventory summary
+        try:
+            from main import load_products
+            products = load_products()
+            
+            text = (
+                "📋 <b>Product Inventory</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "<b>Current Store Inventory:</b>\n\n"
+            )
+            
+            total_products = 0
+            for category, items in products.items():
+                if isinstance(items, list) and items:
+                    count = len(items)
+                    total_products += count
+                    category_display = category.replace('_', ' ').title()
+                    text += f"📦 <b>{category_display}:</b> {count} items\n"
+            
+            if total_products == 0:
+                text += "<i>No products found in inventory.</i>\n"
+            else:
+                text += f"\n💼 <b>Total Products:</b> {total_products} items"
+            
+            text += "\n\n<i>Select a category to view detailed inventory:</i>"
+            
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            
+            # Add category buttons for browsing
+            for category, items in products.items():
+                if isinstance(items, list) and items:
+                    category_display = category.replace('_', ' ').title()
+                    markup.add(types.InlineKeyboardButton(
+                        f"📦 {category_display} ({len(items)})", 
+                        callback_data=f"browse_category_{category}"
+                    ))
+            
+            markup.add(types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu"))
+            
+        except Exception as e:
+            text = f"❌ <b>Error Loading Inventory</b>\n\nCould not load product data: {str(e)}"
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu"))
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+    
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_store_stats")
+    def admin_store_stats(call):
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if c.fetchone() is None:
+                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+                    return
+        
+        try:
+            from main import load_products
+            products = load_products()
+            
+            # Calculate statistics
+            total_products = 0
+            category_stats = {}
+            
+            for category, items in products.items():
+                if isinstance(items, list):
+                    count = len(items)
+                    total_products += count
+                    category_stats[category] = count
+            
+            # Sort categories by product count
+            sorted_categories = sorted(category_stats.items(), key=lambda x: x[1], reverse=True)
+            
+            text = (
+                "📊 <b>Store Statistics</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💼 <b>Total Products:</b> {total_products}\n"
+                f"📂 <b>Active Categories:</b> {len([c for c in category_stats.values() if c > 0])}\n\n"
+                "<b>Category Breakdown:</b>\n\n"
+            )
+            
+            for category, count in sorted_categories:
+                if count > 0:
+                    category_display = category.replace('_', ' ').title()
+                    percentage = (count / total_products * 100) if total_products > 0 else 0
+                    bar = "▓" * min(10, int(percentage / 10))
+                    text += f"📦 <b>{category_display}:</b> {count} ({percentage:.1f}%)\n{bar}\n\n"
+            
+            if total_products == 0:
+                text += "<i>No products in store yet.</i>"
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔄 Refresh Stats", callback_data="admin_store_stats"))
+            markup.add(types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu"))
+            
+        except Exception as e:
+            text = f"❌ <b>Error Loading Statistics</b>\n\nCould not calculate stats: {str(e)}"
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu"))
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+    
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("browse_category_"))
+    def browse_category_details(call):
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if c.fetchone() is None:
+                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+                    return
+        
+        try:
+            category = call.data.split("_", 2)[2]  # Get category from browse_category_{category}
+            from main import load_products
+            products = load_products()
+            
+            category_display = category.replace('_', ' ').title()
+            items = products.get(category, [])
+            
+            text = (
+                f"📦 <b>{category_display} - Detailed View</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+            )
+            
+            if not items:
+                text += f"<i>No products found in {category_display} category.</i>"
+            else:
+                text += f"<b>Total Items:</b> {len(items)}\n\n"
+                
+                # Show first few items as preview
+                preview_count = min(5, len(items))
+                text += f"<b>Sample Items (showing {preview_count}/{len(items)}):</b>\n\n"
+                
+                for i, item in enumerate(items[:preview_count]):
+                    if isinstance(item, dict):
+                        name = item.get('name', f'Item {i+1}')
+                        price = item.get('price', 'N/A')
+                        text += f"🔸 <b>{name}</b> - ${price}\n"
+                    else:
+                        text += f"🔸 {str(item)[:50]}{'...' if len(str(item)) > 50 else ''}\n"
+                
+                if len(items) > preview_count:
+                    text += f"\n<i>...and {len(items) - preview_count} more items</i>"
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton(f"🔧 Manage {category_display}", callback_data=f"admin_cat_menu_{category}"))
+            markup.add(types.InlineKeyboardButton("⬅️ Back to Inventory", callback_data="admin_browse_inventory"))
+            
+        except Exception as e:
+            text = f"❌ <b>Error Loading Category</b>\n\nCould not load {category}: {str(e)}"
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⬅️ Back to Inventory", callback_data="admin_browse_inventory"))
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot.callback_query_handler(func=lambda call: call.data == "admin_referrals_menu")
     def admin_referrals_menu(call):
@@ -2440,8 +2594,8 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             if key in {"methods", "phishing_kits"}:
                 continue
             markup.add(types.InlineKeyboardButton(f"🔧 Manage {name}", callback_data=f"admin_cat_menu_{key}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        bot.edit_message_text("📦 **Manage Products**\n\nChoose a category to add, remove, or modify items.", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Products Menu", callback_data="admin_products_menu"))
+        bot.edit_message_text("�️ <b>Manage Products by Category</b>\n\nChoose a category to add, remove, or modify products:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot.callback_query_handler(func=lambda call: call.data == "admin_manage_hacks")
     def admin_manage_hacks(call):
