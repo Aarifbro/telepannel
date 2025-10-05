@@ -240,7 +240,7 @@ def show_payment_options(bot, call, item, price, item_details, back_callback):
                 f"✨ <b>Enhanced verification system with instant approval!</b>"
             )
             markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(types.InlineKeyboardButton("� Start Payment Process", callback_data=f"enhanced_pay_{payment_id}"))
+            markup.add(types.InlineKeyboardButton("💰 Start Payment Process", callback_data=f"enhanced_pay_{payment_id}"))
             markup.add(types.InlineKeyboardButton("❌ Cancel Order", callback_data=back_callback))
             bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 

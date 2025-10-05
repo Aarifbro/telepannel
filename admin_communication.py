@@ -179,16 +179,16 @@ def register_admin_communication_handlers(bot):
                 "📱 <b>Search by User ID</b> - If you know their Telegram ID\n"
                 "👤 <b>Search by Username</b> - Search by @username or name\n"
                 "⏰ <b>Recent Users</b> - Users who made recent orders\n"
-                "� <b>Active Chats</b> - Currently ongoing conversations\n\n"
+                "💬 <b>Active Chats</b> - Currently ongoing conversations\n\n"
                 "<i>Select an option below:</i>"
             )
             
             markup = types.InlineKeyboardMarkup(row_width=1)
             markup.add(
                 types.InlineKeyboardButton("🆔 Search by User ID", callback_data="admin_search_user_id"),
-                types.InlineKeyboardButton("� Search by Username", callback_data="admin_search_username"),
+                types.InlineKeyboardButton("👤 Search by Username", callback_data="admin_search_username"),
                 types.InlineKeyboardButton("⏰ Recent Users", callback_data="admin_recent_users"),
-                types.InlineKeyboardButton("� Active Chats", callback_data="admin_active_chats"),
+                types.InlineKeyboardButton("💬 Active Chats", callback_data="admin_active_chats"),
                 types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")
             )
             
@@ -1171,8 +1171,8 @@ def register_enhanced_admin_handlers(bot):
         
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("� Search Username", callback_data="search_username"),
-            types.InlineKeyboardButton("� Search User ID", callback_data="search_user_id"),
+            types.InlineKeyboardButton("👤 Search Username", callback_data="search_username"),
+            types.InlineKeyboardButton("🆔 Search User ID", callback_data="search_user_id"),
             types.InlineKeyboardButton("💬 Active Chats", callback_data="active_chats"),
             types.InlineKeyboardButton("⬅️ Back to Owner Panel", callback_data="owner_panel")
         )

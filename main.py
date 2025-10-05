@@ -804,7 +804,7 @@ def register_all_handlers(bot_instance):
             "🚫 <b>User Cleanup Disabled</b>\n\n"
             "User cleanup functionality has been permanently disabled.\n"
             "No users will be removed from the database under any condition.\n\n"
-            "� All users remain in the database permanently.",
+            "♾️ All users remain in the database permanently.",
             parse_mode="HTML"
         )
 

@@ -981,7 +981,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
             # 🎮 SPECIAL FEATURES 🎮
             markup.add(
                 types.InlineKeyboardButton("🎁 Giveaway", callback_data="admin_giveaway_menu"),
-                types.InlineKeyboardButton("� Analytics", callback_data="admin_analytics_menu")
+                types.InlineKeyboardButton("📊 Analytics", callback_data="admin_analytics_menu")
             )
             
             if is_owner:
