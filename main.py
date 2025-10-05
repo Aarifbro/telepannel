@@ -11,15 +11,16 @@ from database import (
     init_db, add_user, get_user_credits, update_user_credits, 
     generate_pro_key, get_all_pro_keys, validate_and_use_pro_key
 )
+from status_handler import get_section_status, handle_unavailable_section
 from helpers import (
-    check_force_join, notify_admin, send_random_animation, 
-    add_gif_to_pool, send_main_menu
+    check_force_join, notify_admin, 
+    add_gif_to_pool, send_main_menu, send_random_animation
 )
 from config import ADMIN_ID, DB_NAME as _DB
 import sqlite3 as _sqlite3
 
 def _notify_cc_success(bot_instance, cc_string, result_obj, user_id):
-    """Notify owner and global admins of a successful CC check with a success GIF."""
+    """Notify owner and global admins of a successful CC check with a rich embed."""
     try:
         brand = result_obj.get("bin_info", {}).get("brand", "?")
         bank = result_obj.get("bin_info", {}).get("bank", "?")
@@ -48,11 +49,12 @@ def _notify_cc_success(bot_instance, cc_string, result_obj, user_id):
                     pass
     except Exception as e:
         print(f"CC success notify error: {e}")
-from cc_handler import register_cc_handlers
-from cc_checker import check_cc, format_cc_response
 from bin_handler import register_bin_handlers
 from payment_handler import register_payment_handlers, show_payment_options
 from other_handlers import register_other_handlers
+from support_handler import register_perfect_support_handlers
+from admin_communication import register_admin_communication_handlers, register_enhanced_admin_handlers, register_admin_message_handlers
+from enhanced_payment_system import register_enhanced_payment_handlers
 
 
 # --- Section Status Storage ---
@@ -131,39 +133,14 @@ def save_products_to_file_and_reload(new_data):
 
 def register_all_handlers(bot_instance):
     # Register handlers from other modules
-    register_cc_handlers(bot_instance, user_states)
     register_bin_handlers(bot_instance)
     register_payment_handlers(bot_instance)
     register_other_handlers(bot_instance, user_states, get_products_from_cache, save_products_to_file_and_reload)
-
-    # --- CC Checker V2 Menu ---
-    @bot_instance.callback_query_handler(func=lambda call: call.data == "cc_checker_v2")
-    def cc_checker_v2_menu(call):
-        user_id = call.from_user.id
-        status = get_user_credits(user_id)
-        
-        credits_display = "Unlimited" if status['is_pro'] else status['credits']
-        
-        text = (
-            f"💳 **CC Checker v2**\n\n"
-            f"Your Credits: `{credits_display}`\n\n"
-            "Choose an option:\n"
-            "- **Single Check**: Check one card at a time.\n"
-            "- **File Check**: Upload a `.txt` file to check multiple cards.\n\n"
-            "**Pricing:**\n"
-            "- `2 credits` per successful (Live) card.\n"
-            "- `1 credit` per unsuccessful (Dead) card."
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("📝 Single Check", callback_data="cc_check_single"),
-            types.InlineKeyboardButton("📄 File Check", callback_data="cc_check_file")
-        )
-        markup.add(types.InlineKeyboardButton("🔑 Use Pro Key", callback_data="use_pro_key"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
-        
-        bot_instance.edit_message_text(text, user_id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    register_perfect_support_handlers(bot_instance)
+    register_admin_communication_handlers(bot_instance)
+    register_enhanced_admin_handlers(bot_instance)
+    register_admin_message_handlers(bot_instance)
+    register_enhanced_payment_handlers(bot_instance)
 
     # --- Combined BINs + Methods menu ---
     @bot_instance.callback_query_handler(func=lambda call: call.data == "bins_methods_menu")
@@ -302,19 +279,7 @@ def register_all_handlers(bot_instance):
                 text += f"<code>{oid}</code> | <code>{name}</code> | <code>${price}</code> | <code>{status}</code> | <code>{date_short}</code>\n"
         bot_instance.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    @bot_instance.callback_query_handler(func=lambda call: call.data == "cc_check_single")
-    def cc_check_single_prompt(call):
-        user_id = call.from_user.id
-        user_states[user_id] = "awaiting_single_cc"
-        text = "Please send the credit card details in the format `cc|mm|yyyy|cvv`."
-        bot_instance.edit_message_text(text, user_id, call.message.message_id)
 
-    @bot_instance.callback_query_handler(func=lambda call: call.data == "cc_check_file")
-    def cc_check_file_prompt(call):
-        user_id = call.from_user.id
-        user_states[user_id] = "awaiting_cc_file"
-        text = "Please upload a `.txt` or `.csv` file containing one card per line."
-        bot_instance.edit_message_text(text, user_id, call.message.message_id)
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "use_pro_key")
     def use_pro_key_prompt(call):
@@ -332,7 +297,7 @@ def register_all_handlers(bot_instance):
         result = validate_and_use_pro_key(key, user_id)
 
         if result == "success":
-            bot_instance.send_message(user_id, "✅ Congratulations! You now have pro access with unlimited CC checks.")
+            bot_instance.send_message(user_id, "✅ Congratulations! You now have pro access with unlimited features.")
         elif result == "used":
             bot_instance.send_message(user_id, "❌ This key has already been used.")
         else: # invalid
@@ -385,99 +350,6 @@ def register_all_handlers(bot_instance):
         bot_instance.edit_message_text(response, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
 
-    # --- CC Checker V2 Handlers (Single and File) ---
-    @bot_instance.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_single_cc")
-    def handle_single_cc_check(message):
-        user_id = message.from_user.id
-        status = get_user_credits(user_id)
-
-        if not status['is_pro'] and status['credits'] < 1:
-            bot_instance.send_message(user_id, "❌ You don't have enough credits for this check.")
-            del user_states[user_id]
-            return
-
-        del user_states[user_id]
-        sent_message = bot_instance.send_message(user_id, "⏳ Checking card... Please wait.")
-        
-        cost = 0
-        result_obj = check_cc(message.text)
-        
-        # Deduct credits based on result
-        if not status['is_pro']:
-            cost = 2 if result_obj.get("status") == "Approved" else 1
-            update_user_credits(user_id, -cost)
-
-        result_text = format_cc_response(message.text, result_obj, cost=cost if not status['is_pro'] else 0)
-        bot_instance.edit_message_text(result_text, user_id, sent_message.message_id, parse_mode="HTML")
-        # Notify on success
-        if result_obj.get("status") == "Approved":
-            _notify_cc_success(bot_instance, message.text, result_obj, user_id)
-
-    @bot_instance.message_handler(content_types=['document'], func=lambda message: user_states.get(message.from_user.id) == "awaiting_cc_file")
-    def handle_cc_file_check(message):
-        user_id = message.from_user.id
-        status = get_user_credits(user_id)
-        
-        if not message.document.file_name.endswith(('.txt', '.csv')):
-            bot_instance.send_message(user_id, "❌ Invalid file type. Please upload a `.txt` or `.csv` file.")
-            return
-
-        del user_states[user_id]
-        
-        try:
-            file_info = bot_instance.get_file(message.document.file_id)
-            downloaded_file = bot_instance.download_file(file_info.file_path)
-            
-            content = downloaded_file.decode('utf-8')
-            cards = [line.strip() for line in content.splitlines() if line.strip()]
-
-            if not status['is_pro'] and status['credits'] < len(cards):
-                bot_instance.send_message(user_id, f"❌ You need at least {len(cards)} credits to check this file, but you only have {status['credits']}.")
-                return
-
-            bot_instance.send_message(user_id, f"⏳ Found {len(cards)} cards. Starting check... This may take a while.")
-
-            live_cards = []
-            dead_cards = []
-            
-            for card in cards:
-                result_obj = check_cc(card)
-                cost = 0
-                if "Approved" in result_obj.get("status", ""):
-                    live_cards.append(card)
-                    _notify_cc_success(bot_instance, card, result_obj, user_id)
-                    if not status['is_pro']:
-                        cost = 2
-                        update_user_credits(user_id, -cost)
-                else:
-                    dead_cards.append(card)
-                    if not status['is_pro']:
-                        cost = 1
-                        update_user_credits(user_id, -cost)
-                time.sleep(2) # To avoid rate limiting
-
-            # Prepare results
-            summary = f"**Mass Check Complete**\n\n✅ Live: {len(live_cards)}\n❌ Dead: {len(dead_cards)}"
-            bot_instance.send_message(user_id, summary, parse_mode="Markdown")
-
-            if live_cards:
-                live_content = "\n".join(live_cards)
-                with open("live_cards.txt", "w") as f:
-                    f.write(live_content)
-                with open("live_cards.txt", "rb") as f:
-                    bot_instance.send_document(user_id, f, caption="Live Cards")
-            
-            if dead_cards:
-                dead_content = "\n".join(dead_cards)
-                with open("dead_cards.txt", "w") as f:
-                    f.write(dead_content)
-                with open("dead_cards.txt", "rb") as f:
-                    bot_instance.send_document(user_id, f, caption="Dead Cards")
-
-        except Exception as e:
-            bot_instance.send_message(user_id, f"An error occurred while processing the file: {e}")
-
-
     # ---------- Local handlers and menus ----------
     
 
@@ -498,13 +370,36 @@ def register_all_handlers(bot_instance):
         )
         if not check_force_join(bot_instance, user_id):
             from config import FORCE_CHANNEL_LINKS
-            markup = types.InlineKeyboardMarkup()
-            for link in FORCE_CHANNEL_LINKS:
-                markup.add(types.InlineKeyboardButton("🔗 Join Channel/Group", url=link))
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            
+            # Create attractive buttons for each channel/group
+            channel_info = [
+                ("📢 Premium Updates Channel", "Get exclusive updates & announcements"),
+                ("📢 Official News Channel", "Latest news & important notifications"), 
+                ("👥 Community Group", "Chat with other users & get support")
+            ]
+            
+            for i, link in enumerate(FORCE_CHANNEL_LINKS):
+                if i < len(channel_info):
+                    title, desc = channel_info[i]
+                    markup.add(types.InlineKeyboardButton(f"🔗 {title}", url=link))
+                else:
+                    markup.add(types.InlineKeyboardButton(f"🔗 Join Channel {i+1}", url=link))
+            
             markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
+            markup.add(types.InlineKeyboardButton("❓ Need Help?", callback_data="force_join_help"))
+            
             force_join_text = (
-                f"{intro_text}\n\n"
-                "⚠️ <b>Access required</b> — Please join our partner channels/groups first."
+                f"🎉 <b>Welcome to Premium Shop!</b>\n\n"
+                "To access our exclusive services and get the best experience, please join our community:\n\n"
+                "📢 <b>2 Updates Channels</b> - Get latest products & offers\n"
+                "👥 <b>1 Support Group</b> - Chat with community & get help\n\n"
+                "💡 <b>Benefits:</b>\n"
+                "• Exclusive deals & discounts\n"
+                "• Priority customer support\n" 
+                "• Early access to new products\n"
+                "• Community tips & guides\n\n"
+                "👆 <b>Tap the links above to join, then press 'I Have Joined'</b>"
             )
             try:
                 send_random_animation(bot_instance, user_id, kind="welcome", caption=force_join_text, reply_markup=markup, parse_mode="HTML")
@@ -519,11 +414,111 @@ def register_all_handlers(bot_instance):
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "check_join")
     def joined_callback(call):
-        if check_force_join(bot_instance, call.from_user.id):
-            bot_instance.delete_message(call.message.chat.id, call.message.message_id)
-            send_main_menu(bot_instance, call.message.chat.id, "✅ **Thank you for joining!** You can now use the bot.")
+        try:
+            if check_force_join(bot_instance, call.from_user.id):
+                bot_instance.delete_message(call.message.chat.id, call.message.message_id)
+                welcome_text = (
+                    "🎉 <b>Awesome! Welcome to Premium Shop!</b>\n\n"
+                    "✅ You're now part of our exclusive community\n"
+                    "🛍️ Access to premium products unlocked\n"
+                    "🎁 Special member benefits activated\n\n"
+                    "👇 <b>Choose what you'd like to explore:</b>"
+                )
+                send_main_menu(bot_instance, call.message.chat.id, welcome_text)
+            else:
+                # More user-friendly error message
+                bot_instance.answer_callback_query(
+                    call.id, 
+                    "📱 Please join at least 2 out of 3 channels/groups above, then try again. Need help? Tap 'Need Help?' button.", 
+                    show_alert=True
+                )
+        except Exception as e:
+            print(f"Error in join check callback: {e}")
+            bot_instance.answer_callback_query(
+                call.id, 
+                "🔄 Connection issue. Please wait a moment and try again.", 
+                show_alert=True
+            )
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "force_join_help")
+    def force_join_help(call):
+        help_text = (
+            "❓ <b>Need Help Joining?</b>\n\n"
+            "📋 <b>Step-by-step guide:</b>\n\n"
+            "1️⃣ <b>Tap each 'Join' button</b> above\n"
+            "2️⃣ <b>Press 'Join Channel/Group'</b> in Telegram\n" 
+            "3️⃣ <b>Come back here</b> and tap 'I Have Joined'\n\n"
+            "💡 <b>Tips:</b>\n"
+            "• You need to join at least 2 out of 3 links\n"
+            "• Make sure you actually press 'Join' (not just view)\n"
+            "• Wait a few seconds between joining and checking\n\n"
+            "🆘 <b>Still having issues?</b>\n"
+            "Contact support: @YourSupportUsername"
+        )
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔙 Back to Joining", callback_data="back_to_force_join"))
+        
+        bot_instance.edit_message_text(
+            help_text, 
+            call.message.chat.id, 
+            call.message.message_id, 
+            reply_markup=markup, 
+            parse_mode="HTML"
+        )
+
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "back_to_force_join")
+    def back_to_force_join(call):
+        # Redirect back to the start command to show force join again
+        user_id = call.from_user.id
+        username = call.from_user.username or call.from_user.first_name
+        
+        intro_text = (
+            "💎 <b>𝗣𝗿𝗲𝗺𝗶𝘂𝗺 𝗦𝗵𝗼𝗽</b> \n"
+            "✨ <i>All‑in‑one • Fast • Secure</i>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🏷️ CC • BINs • Methods • Gift Cards\n"
+            "⚡ Instant delivery • 🎯 Smart search • 💼 Wallet\n\n"
+            "👇 <b>Tap a category below to begin</b>"
+        )
+        
+        if not check_force_join(bot_instance, user_id):
+            from config import FORCE_CHANNEL_LINKS
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            
+            channel_info = [
+                ("📢 Premium Updates Channel", "Get exclusive updates & announcements"),
+                ("📢 Official News Channel", "Latest news & important notifications"), 
+                ("👥 Community Group", "Chat with other users & get support")
+            ]
+            
+            for i, link in enumerate(FORCE_CHANNEL_LINKS):
+                if i < len(channel_info):
+                    title, desc = channel_info[i]
+                    markup.add(types.InlineKeyboardButton(f"🔗 {title}", url=link))
+                else:
+                    markup.add(types.InlineKeyboardButton(f"🔗 Join Channel {i+1}", url=link))
+            
+            markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
+            markup.add(types.InlineKeyboardButton("❓ Need Help?", callback_data="force_join_help"))
+            
+            force_join_text = (
+                f"🎉 <b>Welcome Back!</b>\n\n"
+                "Please join our community channels to continue:\n\n"
+                "📢 <b>2 Updates Channels</b> - Latest products & offers\n"
+                "👥 <b>1 Support Group</b> - Community chat & help\n\n"
+                "👆 <b>Tap the links above, then press 'I Have Joined'</b>"
+            )
+            
+            bot_instance.edit_message_text(
+                force_join_text,
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=markup,
+                parse_mode="HTML"
+            )
         else:
-            bot_instance.answer_callback_query(call.id, "❌ You haven't joined the channel yet.", show_alert=True)
+            send_main_menu(bot_instance, call.message.chat.id, "✅ <b>Welcome!</b> You can now use the bot.")
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "manage_orders_panel")
     def manage_orders_panel(call):
@@ -725,6 +720,8 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data == "ai_search")
     def ai_search_prompt(call):
         """Prompts the user to enter their search query."""
+        if handle_unavailable_section(bot_instance, call, "ai_search"):
+            return
         user_states[call.from_user.id] = "awaiting_ai_search"
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("⬅️ Cancel", callback_data="main_menu"))
@@ -746,6 +743,11 @@ def register_all_handlers(bot_instance):
         results = []
         # Iterate through all categories and items
         for category, items in all_products.items():
+            # Check if the section is available before including it in search
+            section_key = category.lower().replace(' ', '_')
+            if get_section_status(section_key) != "available":
+                continue
+
             for index, item in enumerate(items):
                 # Create a searchable text block for each item
                 search_block = f"{item.get('name', '')} {item.get('description', '')} {item.get('bin', '')} {item.get('country', '')} {item.get('info', '')} {item.get('bank', '')}".lower()
@@ -789,6 +791,22 @@ def register_all_handlers(bot_instance):
     @bot_instance.message_handler(commands=['ownerinfo'])
     def cmd_ownerinfo(message):
         bot_instance.reply_to(message, f"Configured owner (ADMIN_ID): <code>{ADMIN_ID}</code>\nYour user ID: <code>{message.from_user.id}</code>", parse_mode="HTML")
+
+    # Admin command: Clean up users who left channels
+    @bot_instance.message_handler(commands=['cleanup'])
+    def cmd_cleanup_users(message):
+        if message.from_user.id != ADMIN_ID:
+            bot_instance.reply_to(message, "❌ Only the owner can use this command.")
+            return
+            
+        bot_instance.send_message(
+            message.chat.id,
+            "🚫 <b>User Cleanup Disabled</b>\n\n"
+            "User cleanup functionality has been permanently disabled.\n"
+            "No users will be removed from the database under any condition.\n\n"
+            "� All users remain in the database permanently.",
+            parse_mode="HTML"
+        )
 
     # --- Auto-ingest GIFs from configured groups using hashtags ---
     @bot_instance.message_handler(content_types=['animation'])
@@ -851,8 +869,6 @@ def run_bot(bot_instance, name):
         except Exception as e:
             print(f"An unexpected error occurred in {name}: {e}. Retrying in 20 seconds...")
             time.sleep(20)
-
-
 if __name__ == '__main__':
     print("🤖 Starting bots...")
     init_db()
@@ -896,6 +912,9 @@ if __name__ == '__main__':
                 notify_admin(b, f"✅ **Bot #{idx} is Online!** (No button)")
             except Exception:
                 pass
+
+    # User cleanup is completely disabled - no periodic cleanup function
+    print("🚫 User cleanup disabled - no users will be removed from database")
 
     threads = []
     for idx, b in enumerate(bots, start=1):

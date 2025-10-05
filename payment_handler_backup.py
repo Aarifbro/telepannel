@@ -8,9 +8,6 @@ from helpers import send_random_animation
 from helpers import generate_fake_details # NOTE: Assuming notify_admin is handled by the direct message below
 from database import load_products, get_user_balance, update_user_balance
 
-# Store user states for multi-step interactions
-user_states = {}
-
 # Placeholder for the deliver_product function, as its definition was not provided.
 # This function should contain the logic for sending the purchased item to the user.
 def deliver_product(bot, user_id, order_id, item_details):
@@ -227,20 +224,17 @@ def show_payment_options(bot, call, item, price, item_details, back_callback):
                 )
                 conn.commit()
 
-            # Use enhanced payment system for better user experience
             text = (
-                f"💳 <b>Payment Instructions</b>\n\n"
-                f"<b>Item:</b> {item}\n"
-                f"<b>Amount:</b> ${price_usd}\n"
+                f"<b>💰 Manual Payment</b>\n\n"
+                f"Please make a payment of <b>${price_usd}</b> to the address below.\n\n"
+                f"<b>IMPORTANT:</b> You must include the <b>Payment ID</b> in the memo/note of your transaction for verification.\n\n"
+                f"<b>Address:</b> <code>{CRYPTO_ADDRESS}</code>\n"
                 f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
-                f"🔄 <b>Next Steps:</b>\n"
-                f"1️⃣ Send <b>${price_usd}</b> to: <code>{CRYPTO_ADDRESS}</code>\n"
-                f"2️⃣ Include Payment ID in memo: <code>{payment_id}</code>\n"
-                f"3️⃣ Click 'Start Payment Process' below\n\n"
-                f"✨ <b>Enhanced verification system with instant approval!</b>"
+                f"After sending the payment, upload a payment screenshot here, then click the confirmation button."
             )
             markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(types.InlineKeyboardButton("� Start Payment Process", callback_data=f"enhanced_pay_{payment_id}"))
+            markup.add(types.InlineKeyboardButton("📷 Upload Screenshot", callback_data=f"upload_ss_{payment_id}"))
+            markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data=f"paid_confirm_{payment_id}"))
             markup.add(types.InlineKeyboardButton("❌ Cancel Order", callback_data=back_callback))
             bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
@@ -253,172 +247,18 @@ def show_payment_options(bot, call, item, price, item_details, back_callback):
         """Handles the user's confirmation of payment and notifies the admin."""
         try:
             payment_id = call.data.split('_')[2]
-            # Check if screenshot is required
+            # Enforce screenshot requirement if no wallet payment
             ss_map = getattr(bot, '_payment_screenshots', {})
-            has_screenshot = ss_map.get(payment_id) is not None
-            
-            # Get order details to check if this is a manual crypto payment
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                row = c.execute("SELECT payment_method, payment_status FROM orders WHERE order_id = ?", (payment_id,)).fetchone()
-            
-            if row and row[0] == 'MANUAL_CRYPTO' and row[1] in ('PENDING_PAYMENT', 'PENDING_APPROVAL'):
-                if not has_screenshot:
-                    # Offer to proceed without screenshot but warn user
-                    text = (
-                        f"⚠️ <b>No Screenshot Uploaded</b>\n\n"
-                        f"You haven't uploaded a payment screenshot yet. While this is not strictly required, "
-                        f"it helps our admin verify your payment faster.\n\n"
-                        f"Would you like to:"
-                    )
-                    markup = types.InlineKeyboardMarkup(row_width=1)
-                    markup.add(types.InlineKeyboardButton("📷 Upload Screenshot First", callback_data=f"upload_ss_{payment_id}"))
-                    markup.add(types.InlineKeyboardButton("✅ Continue Without Screenshot", callback_data=f"confirm_no_ss_{payment_id}"))
-                    markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"back_to_payment_{payment_id}"))
-                    
-                    bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
-                                        reply_markup=markup, parse_mode="HTML")
+            if ss_map.get(payment_id) is None:
+                # Check DB status to ensure this is a manual order in pending payment
+                with sqlite3.connect(DB_NAME) as conn:
+                    c = conn.cursor()
+                    row = c.execute("SELECT payment_method, payment_status FROM orders WHERE order_id = ?", (payment_id,)).fetchone()
+                if not row or row[0] != 'MANUAL_CRYPTO' or row[1] not in ('PENDING_PAYMENT','PENDING_APPROVAL'):
+                    pass
+                else:
+                    bot.answer_callback_query(call.id, "Please upload a payment screenshot first.", show_alert=True)
                     return
-            
-            # Use the shared payment confirmation logic
-            process_payment_confirmation(call, payment_id)
-            
-        except Exception as e:
-            print(f"Error in payment confirmation: {e}")
-            bot.answer_callback_query(call.id, "An error occurred.", show_alert=True)
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("upload_ss_"))
-    def request_screenshot_upload(call):
-        payment_id = call.data.split('_')[-1]
-        if not hasattr(bot, '_awaiting_ss'):
-            bot._awaiting_ss = {}
-        bot._awaiting_ss[call.from_user.id] = payment_id
-        
-        text = (
-            f"📷 <b>Upload Payment Screenshot</b>\n\n"
-            f"Please send a <b>photo or image</b> of your payment transaction for Payment ID <code>{payment_id}</code>.\n\n"
-            f"💡 <b>Tips for a good screenshot:</b>\n"
-            f"• Include transaction ID/hash\n"
-            f"• Show payment amount\n"
-            f"• Include Payment ID in memo\n"
-            f"• Make sure image is clear and readable\n\n"
-            f"After uploading, you'll be able to click 'I Have Paid' to complete the process."
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data=f"back_to_payment_{payment_id}"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(content_types=['photo'])
-    def capture_payment_screenshot(message):
-        try:
-            pending = getattr(bot, '_awaiting_ss', {})
-            payment_id = pending.get(message.from_user.id)
-            if not payment_id:
-                return
-            file_id = message.photo[-1].file_id
-            if not hasattr(bot, '_payment_screenshots'):
-                bot._payment_screenshots = {}
-            bot._payment_screenshots[payment_id] = file_id
-            del bot._awaiting_ss[message.from_user.id]
-            
-            # Send screenshot to admin immediately
-            try:
-                bot.send_photo(ADMIN_ID, file_id, caption=f"📷 Payment Screenshot - ID: {payment_id}\nUser: {message.from_user.first_name} ({message.from_user.id})")
-            except:
-                pass
-                
-            # Send confirmation with payment buttons restored
-            text = (
-                f"✅ <b>Screenshot Uploaded Successfully!</b>\n\n"
-                f"📷 Your payment screenshot for Payment ID <code>{payment_id}</code> has been saved and sent to admin for verification.\n\n"
-                f"Now click <b>'I Have Paid'</b> to notify the admin and complete your payment confirmation."
-            )
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data=f"paid_confirm_{payment_id}"))
-            markup.add(types.InlineKeyboardButton("📷 Upload Different Screenshot", callback_data=f"upload_ss_{payment_id}"))
-            markup.add(types.InlineKeyboardButton("❌ Cancel Order", callback_data="main_menu"))
-            
-            bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-        except Exception as e:
-            bot.reply_to(message, f"❌ Could not save screenshot: {e}")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("back_to_payment_"))
-    def back_to_payment_screen(call):
-        """Return user to payment screen from screenshot upload"""
-        payment_id = call.data.split('_')[-1]
-        user_id = call.from_user.id
-        
-        # Clear screenshot awaiting state
-        if hasattr(bot, '_awaiting_ss') and user_id in bot._awaiting_ss:
-            del bot._awaiting_ss[user_id]
-        
-        # Get payment details from database
-        try:
-            with sqlite3.connect(DB_NAME) as conn:
-                cursor = conn.cursor()
-                order = cursor.execute("SELECT item_name, price_usd FROM orders WHERE order_id = ? AND user_id = ?", 
-                                     (payment_id, user_id)).fetchone()
-                
-                if not order:
-                    bot.answer_callback_query(call.id, "Order not found", show_alert=True)
-                    return
-                    
-                item_name, price_usd = order
-        except Exception as e:
-            bot.answer_callback_query(call.id, "Error loading order", show_alert=True)
-            return
-        
-        # Show payment screen again
-        text = (
-            f"<b>💰 Manual Payment</b>\n\n"
-            f"Please make a payment of <b>${price_usd}</b> to the address below.\n\n"
-            f"<b>IMPORTANT:</b> You must include the <b>Payment ID</b> in the memo/note of your transaction for verification.\n\n"
-            f"<b>Address:</b> <code>{CRYPTO_ADDRESS}</code>\n"
-            f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
-            f"After sending the payment, upload a payment screenshot here, then click the confirmation button."
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("📷 Upload Screenshot", callback_data=f"upload_ss_{payment_id}"))
-        markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data=f"paid_confirm_{payment_id}"))
-        markup.add(types.InlineKeyboardButton("❌ Cancel Order", callback_data="main_menu"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_no_ss_"))
-    def confirm_payment_without_screenshot(call):
-        """Handle payment confirmation without screenshot"""
-        payment_id = call.data.split('_')[-1]
-        
-        # Proceed with the normal payment confirmation flow
-        process_payment_confirmation(call, payment_id)
-
-    def process_payment_confirmation(call, payment_id):
-        """Process the actual payment confirmation logic"""
-        try:
-            # REQUIRE screenshot before processing
-            screenshot_file_id = getattr(bot, '_payment_screenshots', {}).get(payment_id)
-            if not screenshot_file_id:
-                bot.answer_callback_query(call.id, "❌ Screenshot required!", show_alert=True)
-                
-                text = (
-                    f"📷 <b>Screenshot Required</b>\n\n"
-                    f"❌ <b>Cannot process payment without screenshot.</b>\n\n"
-                    f"You must upload a payment screenshot before the admin can review your payment.\n\n"
-                    f"This helps verify your transaction and prevents fraud.\n\n"
-                    f"Please upload your payment screenshot first."
-                )
-                
-                markup = types.InlineKeyboardMarkup(row_width=1)
-                markup.add(types.InlineKeyboardButton("📷 Upload Screenshot", callback_data=f"upload_ss_{payment_id}"))
-                markup.add(types.InlineKeyboardButton("❌ Cancel Order", callback_data=f"back_to_payment_{payment_id}"))
-                
-                bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
-                                    reply_markup=markup, parse_mode="HTML")
-                return
-                
             bot.answer_callback_query(call.id, "Confirmation received. Notifying admin...")
 
             with sqlite3.connect(DB_NAME) as conn:
@@ -447,10 +287,7 @@ Please verify the transaction and approve or reject it.
             admin_markup = types.InlineKeyboardMarkup(row_width=2)
             admin_markup.add(
                 types.InlineKeyboardButton("✅ Approve", callback_data=f"admin_approve_{payment_id}"),
-                types.InlineKeyboardButton("❌ Reject with Remarks", callback_data=f"admin_reject_remarks_{payment_id}")
-            )
-            admin_markup.add(
-                types.InlineKeyboardButton("💬 Chat with User", callback_data=f"admin_chat_user_{user_id}")
+                types.InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_{payment_id}")
             )
             # Attach screenshot if provided
             screenshot_file_id = getattr(bot, '_payment_screenshots', {}).get(payment_id)
@@ -475,6 +312,38 @@ An administrator will now verify your transaction. You will be notified once it 
             print(f"Error confirming payment: {e}")
             bot.answer_callback_query(call.id, "An error occurred.", show_alert=True)
 
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("upload_ss_"))
+    def request_screenshot_upload(call):
+        payment_id = call.data.split('_')[-1]
+        if not hasattr(bot, '_awaiting_ss'):
+            bot._awaiting_ss = {}
+        bot._awaiting_ss[call.from_user.id] = payment_id
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="main_menu"))
+        bot.edit_message_text(
+            f"Please send a <b>photo or image</b> as your payment screenshot for Payment ID <code>{payment_id}</code>.",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
+
+    @bot.message_handler(content_types=['photo'])
+    def capture_payment_screenshot(message):
+        try:
+            pending = getattr(bot, '_awaiting_ss', {})
+            payment_id = pending.get(message.from_user.id)
+            if not payment_id:
+                return
+            file_id = message.photo[-1].file_id
+            if not hasattr(bot, '_payment_screenshots'):
+                bot._payment_screenshots = {}
+            bot._payment_screenshots[payment_id] = file_id
+            del bot._awaiting_ss[message.from_user.id]
+            bot.reply_to(message, f"✅ Screenshot saved for Payment ID {payment_id}. Now tap ‘I Have Paid’.")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Could not save screenshot: {e}")
+
     @bot.callback_query_handler(func=lambda call: call.data.startswith("pay_wallet_"))
     def pay_with_wallet(call):
         """Instantly complete purchase using internal wallet balance."""
@@ -487,14 +356,6 @@ An administrator will now verify your transaction. You will be notified once it 
         item = temp['item']
         price = float(temp['price'])
         item_details = temp['item_details']
-        try:
-            balance = float(get_user_balance(user_id))
-        except Exception:
-            balance = 0.0
-        try:
-            balance = float(get_user_balance(user_id))
-        except Exception:
-            balance = 0.0
         try:
             bal = float(get_user_balance(user_id))
             if bal < price:
@@ -590,203 +451,37 @@ An administrator will now verify your transaction. You will be notified once it 
             print(f"Error approving payment: {e}")
             bot.answer_callback_query(call.id, "An error occurred.", show_alert=True)
 
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_reject_remarks_"))
-    def admin_reject_with_remarks(call):
-        """Handle payment rejection with admin remarks"""
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_reject_"))
+    def admin_rejects_payment(call):
+        """Handles the admin's 'Reject' action."""
         if call.from_user.id != ADMIN_ID:
             bot.answer_callback_query(call.id, "You are not authorized.", show_alert=True)
             return
 
-        payment_id = call.data.replace("admin_reject_remarks_", "")
-        
-        # Set user state to await rejection remarks
-        user_states[call.from_user.id] = f"awaiting_rejection_remarks_{payment_id}"
-        
-        text = (
-            f"❌ <b>Reject Payment with Remarks</b>\n\n"
-            f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
-            f"Please enter the reason for rejecting this payment:\n\n"
-            f"<b>Common reasons:</b>\n"
-            f"• Invalid payment amount\n"
-            f"• Payment ID not found in memo\n"
-            f"• Screenshot unclear or invalid\n"
-            f"• Transaction not confirmed\n"
-            f"• Suspicious activity detected\n\n"
-            f"Type your custom rejection reason:"
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("⚡ Invalid Amount", callback_data=f"quick_reject_{payment_id}_Invalid payment amount"),
-            types.InlineKeyboardButton("📷 Screenshot Issue", callback_data=f"quick_reject_{payment_id}_Screenshot unclear or invalid"),
-            types.InlineKeyboardButton("🔍 Payment ID Missing", callback_data=f"quick_reject_{payment_id}_Payment ID not found in transaction memo"),
-            types.InlineKeyboardButton("⏱️ Transaction Not Found", callback_data=f"quick_reject_{payment_id}_Transaction not confirmed in our system"),
-            types.InlineKeyboardButton("✏️ Custom Reason", callback_data=f"custom_reject_{payment_id}")
-        )
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_approve_{payment_id}"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("quick_reject_"))
-    def quick_reject_payment(call):
-        """Handle quick rejection with predefined reasons"""
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "You are not authorized.", show_alert=True)
-            return
-
-        parts = call.data.split('_', 2)  # quick_reject_{payment_id}_{reason}
-        if len(parts) < 3:
-            bot.answer_callback_query(call.id, "Invalid rejection data", show_alert=True)
-            return
-            
-        payment_id = parts[2].split('_')[0]
-        reason = '_'.join(parts[2].split('_')[1:])
-        
-        # Process the rejection directly
-        process_rejection_with_reason(bot, call, payment_id, reason)
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("custom_reject_"))
-    def custom_reject_payment(call):
-        """Handle custom rejection reason input"""
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "You are not authorized.", show_alert=True)
-            return
-
-        payment_id = call.data.replace("custom_reject_", "")
-        
-        # Set user state to await custom rejection remarks
-        user_states[call.from_user.id] = f"awaiting_rejection_remarks_{payment_id}"
-        
-        text = (
-            f"✏️ <b>Custom Rejection Reason</b>\n\n"
-            f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
-            f"Please type your custom rejection reason:\n\n"
-            f"<i>Be specific and professional. The user will see this message.</i>"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_reject_remarks_{payment_id}"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("awaiting_rejection_remarks_"))
-    def handle_rejection_remarks(message):
-        """Handle admin's rejection remarks input"""
-        if message.from_user.id != ADMIN_ID:
-            return
-            
-        state = user_states[message.from_user.id]
-        payment_id = state.replace("awaiting_rejection_remarks_", "")
-        remarks = message.text.strip()
-        
-        if len(remarks) < 5:
-            bot.reply_to(message, "❌ Rejection reason too short. Please provide at least 5 characters.")
-            return
-
-        # Process the rejection
-        process_rejection_with_reason(bot, message, payment_id, remarks)
-        
-        # Clear user state
-        if message.from_user.id in user_states:
-            del user_states[message.from_user.id]
-
-def process_rejection_with_reason(bot, context, payment_id, remarks):
-    """Process payment rejection with given reason"""
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            
-            # Create payment_responses table if it doesn't exist
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS payment_responses (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    payment_id TEXT,
-                    admin_id INTEGER,
-                    response_type TEXT,
-                    remarks TEXT,
-                    responded_at TEXT
-                )
-            ''')
-            
-            order_data = cursor.execute("SELECT user_id, payment_status FROM orders WHERE order_id = ?", (payment_id,)).fetchone()
-
-            if not order_data:
-                if hasattr(context, 'reply_to'):
-                    bot.reply_to(context, f"❌ Order `{payment_id}` not found.")
-                else:
-                    bot.answer_callback_query(context.id, f"Order {payment_id} not found", show_alert=True)
-                return
-            if order_data[1] != "PENDING_APPROVAL":
-                if hasattr(context, 'reply_to'):
-                    bot.reply_to(context, "❌ This order has already been processed.")
-                else:
-                    bot.answer_callback_query(context.id, "Order already processed", show_alert=True)
-                return
-
-            user_id, _ = order_data
-            cursor.execute("UPDATE orders SET payment_status = ? WHERE order_id = ?", ("REJECTED", payment_id))
-            
-            # Save rejection remarks - get admin_id properly
-            admin_id = context.from_user.id if hasattr(context, 'from_user') else ADMIN_ID
-            cursor.execute('''
-                INSERT INTO payment_responses (payment_id, admin_id, response_type, remarks, responded_at)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (payment_id, admin_id, 'rejected', remarks, datetime.now(UTC).isoformat()))
-            
-            conn.commit()
-
-        # Send detailed rejection message to user
-        user_msg = (
-            f"❌ <b>Payment Rejected</b>\n\n"
-            f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
-            f"<b>Reason:</b> {remarks}\n\n"
-            f"<b>What to do next:</b>\n"
-            f"• Check the reason above\n"
-            f"• Contact support if you need help\n"
-            f"• You can try placing a new order\n\n"
-            f"<i>Rejected by admin on {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}</i>"
-        )
-        send_random_animation(bot, user_id, kind="reject", caption=user_msg, parse_mode="HTML")
-        
-        # Update admin message
-        admin_confirmation = (
-            f"✅ <b>Payment Rejected with Remarks</b>\n\n"
-            f"<b>Payment ID:</b> <code>{payment_id}</code>\n"
-            f"<b>User ID:</b> <code>{user_id}</code>\n"
-            f"<b>Rejection Reason:</b> {remarks}\n\n"
-            f"The user has been notified of the rejection and reason."
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("💬 Chat with User", callback_data=f"admin_chat_user_{user_id}"))
-        
-        # Send confirmation to admin
-        chat_id = context.chat.id if hasattr(context, 'chat') else context.message.chat.id
-        bot.send_message(chat_id, admin_confirmation, reply_markup=markup, parse_mode="HTML")
-        
-    except Exception as e:
-        print(f"Error rejecting payment with remarks: {e}")
-        if hasattr(context, 'reply_to'):
-            bot.reply_to(context, f"❌ An error occurred while processing rejection: {str(e)}")
-        else:
-            bot.answer_callback_query(context.id, "Error processing rejection", show_alert=True)
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_chat_user_"))
-    def start_admin_user_chat_from_payment(call):
-        """Start chat with user from payment screen"""
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "You are not authorized.", show_alert=True)
-            return
-            
-        user_id = int(call.data.split('_')[3])
-        
-        # Import and use admin communication system
         try:
-            from admin_communication import start_admin_user_chat
-            start_admin_user_chat(bot, call.from_user.id, user_id, call.message.chat.id)
-            bot.answer_callback_query(call.id, f"Started chat with user {user_id}")
+            payment_id = call.data.split('_')[2]
+            bot.answer_callback_query(call.id, f"Rejecting payment {payment_id}...")
+
+            with sqlite3.connect(DB_NAME) as conn:
+                cursor = conn.cursor()
+                order_data = cursor.execute("SELECT user_id, payment_status FROM orders WHERE order_id = ?", (payment_id,)).fetchone()
+
+                if not order_data:
+                    bot.edit_message_text(f"Order `{payment_id}` not found.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+                    return
+                if order_data[1] != "PENDING_APPROVAL":
+                    bot.answer_callback_query(call.id, "This order has already been processed.", show_alert=True)
+                    return
+
+                user_id, _ = order_data
+                cursor.execute("UPDATE orders SET payment_status = ? WHERE order_id = ?", ("REJECTED", payment_id))
+                conn.commit()
+
+            user_msg = f"⚠️ **Payment Rejected**\n\nYour payment with ID `{payment_id}` could not be confirmed. Please contact support for assistance."
+            send_random_animation(bot, user_id, kind="reject", caption=user_msg, parse_mode="Markdown")
+            
+            bot.edit_message_text(call.message.text + f"\n\n**Action: Rejected by {call.from_user.first_name}** ❌", call.message.chat.id, call.message.message_id, reply_markup=None, parse_mode="Markdown")
+
         except Exception as e:
-            print(f"Error starting chat: {e}")
-            bot.answer_callback_query(call.id, "Failed to start chat", show_alert=True)
+            print(f"Error rejecting payment: {e}")
+            bot.answer_callback_query(call.id, "An error occurred.", show_alert=True)

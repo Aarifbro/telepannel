@@ -9,17 +9,18 @@ ADMIN_ID = 1513264586 # Enter your numeric user ID
 CRYPTO_ADDRESS = "bc1qe5l2pzz3nytre346e04tjnjsa9ztz5tzz9gzfy" 
 
 # --- Force Join Configuration ---
-# To force users to join multiple channels, put all the IDs in a list.
+# Force users to join 2 channels and 1 group
 FORCE_CHANNEL_IDS = [
-    -1003176211335,
-    -1002148162931
+    -1003161447093,  # Channel 1
+    -1002422874306,  # Channel 2  
+    -1003176211335   # Group 1
 ]
 
 # --- Force Join Links (corresponds to FORCE_CHANNEL_IDS) ---
 FORCE_CHANNEL_LINKS = [
-    "https://t.me/+-YGFDtuSOTAwMDVh",
-    "https://t.me/+TW0_zanpogpmYjJl",
-    "https://t.me/+aKnhzgoNsN45Mzg1"
+    "https://t.me/+Sru6nP_x3WIzZTYx",  # Channel 1 link
+    "https://t.me/+Dg-zevv1Nq0xY2Q1",  # Channel 2 link
+    "https://t.me/+sSuMZ9Mqb8NiYTdl"   # Group 1 link
 ]
 
 # --- File & Database Configuration ---

@@ -6,7 +6,10 @@ import sqlite3
 from typing import Dict, List
 from config import (
     FORCE_CHANNEL_IDS, ADMIN_ID, WELCOME_GIF,
-    SUCCESS_GIF, REJECT_GIF, PENDING_GIF, USE_GIF_URL_FALLBACK, DB_NAME
+    SUCCESS_GIF, REJECT_GIF, PENDING_GIF, USE_GIF_URL_FALLBACK, D    markup.add(
+        types.InlineKeyboardButton("📊 User Dashboard", callback_data="user_dashboard"),
+        types.InlineKeyboardButton("💰 Add Funds", callback_data="add_funds")
+    )ME
 )
 
 def check_force_join(bot, user_id):
@@ -20,49 +23,27 @@ def check_force_join(bot, user_id):
         if not FORCE_CHANNEL_IDS:
             return True
             
-        # Allow admins to bypass force join
-        if user_id == ADMIN_ID:
-            return True
-            
-        joined_count = 0
-        total_channels = len(FORCE_CHANNEL_IDS)
-        
         for channel_id in FORCE_CHANNEL_IDS:
             try:
                 member = bot.get_chat_member(channel_id, user_id)
                 # Check for valid membership statuses
-                if member.status in ["creator", "administrator", "member"]:
-                    joined_count += 1
-                elif member.status in ["left", "kicked"]:
+                if member.status in ["left", "kicked", "restricted"]:
                     print(f"User {user_id} not in chat {channel_id}, status: {member.status}")
-                else:
-                    print(f"User {user_id} has status {member.status} in chat {channel_id}")
+                    return False
+                # Valid statuses: "creator", "administrator", "member"
+                if member.status not in ["creator", "administrator", "member"]:
+                    print(f"User {user_id} has invalid status {member.status} in chat {channel_id}")
+                    return False
             except Exception as chat_error:
-                error_str = str(chat_error).lower()
-                # If user is not found or privacy settings prevent check, be more lenient
-                if "user not found" in error_str or "bad request" in error_str or "chat not found" in error_str:
-                    print(f"Cannot verify membership for user {user_id} in chat {channel_id}: {chat_error}")
-                    # For privacy/API issues, count as joined to avoid blocking legitimate users
-                    joined_count += 1
-                else:
-                    print(f"Error checking membership for user {user_id} in chat {channel_id}: {chat_error}")
-        
-        # Require at least 2 out of 3 channels to be more flexible
-        required_joins = max(1, total_channels - 1) if total_channels > 1 else total_channels
-        is_joined = joined_count >= required_joins
-        
-        print(f"User {user_id} joined {joined_count}/{total_channels} channels (required: {required_joins}) - {'ALLOWED' if is_joined else 'BLOCKED'}")
-        return is_joined
-        
+                print(f"Error checking membership for user {user_id} in chat {channel_id}: {chat_error}")
+                # If we can't check membership (e.g., bot not in channel, user privacy), allow access
+                # This prevents blocking legitimate users due to API issues
+                continue
+        return True
     except Exception as e:
         print(f"Force join check failed: {e}")
         # In case of general error, allow access to prevent blocking users
         return True
-
-def cleanup_left_users():
-    """User cleanup is disabled - no users will be removed"""
-    print("User cleanup is disabled - no users will be removed from database")
-    return 0
 
 def notify_admin(bot, message, markup=None):
     """
@@ -218,35 +199,6 @@ def send_main_menu(bot, chat_id, text, message_id=None):
     Sends the main menu keyboard to the user with fresh modern design.
     Can either edit an existing message or send a new one.
     """
-    # Load current section statuses
-    try:
-        with open('section_status.json', 'r') as f:
-            section_statuses = json.load(f)
-    except FileNotFoundError:
-        # Default statuses if file doesn't exist
-        section_statuses = {
-            "cc_shop": "available",
-            "bins_methods": "available", 
-            "gift_cards": "coming_soon",
-            "hacks": "coming_soon",
-            "dumps": "available",
-            "rdp": "coming_soon",
-            "support": "available",
-            "ai_search": "available"
-        }
-    
-    # Status icon mapping
-    status_icons = {
-        "available": "🟢",
-        "coming_soon": "🟡", 
-        "maintenance": "🔴"
-    }
-    
-    def get_button_text(base_text, section_key):
-        status = section_statuses.get(section_key, "available")
-        icon = status_icons.get(status, "🟢")
-        return f"{base_text} {icon}"
-    
     markup = types.InlineKeyboardMarkup(row_width=2)
 
     # Determine roles early (owner/global admin/section admin)
@@ -268,18 +220,18 @@ def send_main_menu(bot, chat_id, text, message_id=None):
     
     # 🎯 MAIN STORE SECTIONS 🎯
     markup.add(
-        types.InlineKeyboardButton(get_button_text("🛍️ CC Shop", "cc_shop"), callback_data="cc_menu"),
-        types.InlineKeyboardButton(get_button_text("💎 BINs • Methods", "bins_methods"), callback_data="bins_methods_menu")
+        types.InlineKeyboardButton("🛍️ CC Shop", callback_data="cc_menu"),
+        types.InlineKeyboardButton("💎 BINs • Methods", callback_data="bins_methods_menu")
     )
 
     markup.add(
-        types.InlineKeyboardButton(get_button_text("🎁 Gift Cards", "gift_cards"), callback_data="giftcards_menu"),
-        types.InlineKeyboardButton(get_button_text("🛠️ Hacks", "hacks"), callback_data="hacks_menu")
+        types.InlineKeyboardButton("🎁 Gift Cards", callback_data="giftcards_menu"),
+        types.InlineKeyboardButton("🛠️ Hacks", callback_data="hacks_menu")
     )
 
     markup.add(
-        types.InlineKeyboardButton(get_button_text("📄 Dumps", "dumps"), callback_data="dumps_menu"),
-        types.InlineKeyboardButton(get_button_text("🖥️ RDP", "rdp"), callback_data="rdp_menu")
+        types.InlineKeyboardButton("📄 Dumps", callback_data="dumps_menu"),
+        types.InlineKeyboardButton("🖥️ RDP", callback_data="rdp_menu")
     )
 
     # 👤 USER SECTION 👤
@@ -289,7 +241,7 @@ def send_main_menu(bot, chat_id, text, message_id=None):
     )
 
     markup.add(
-        types.InlineKeyboardButton("📊 User Dashboard", callback_data="user_dashboard"),
+        types.InlineKeyboardButton("� User Dashboard", callback_data="user_dashboard"),
         types.InlineKeyboardButton("💰 Add Funds", callback_data="add_funds")
     )
 

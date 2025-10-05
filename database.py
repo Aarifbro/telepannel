@@ -113,18 +113,78 @@ def init_db():
             )
         ''')
         
-        # Create support sessions table (for in-bot support chat)
+        # Create enhanced support sessions table (for in-bot support chat)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS support_sessions (
                 session_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 admin_id INTEGER,
-                status TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                category TEXT DEFAULT 'general',
+                priority INTEGER DEFAULT 1,
+                subject TEXT,
+                first_response_time INTEGER,
+                resolution_time INTEGER,
+                user_rating INTEGER,
+                admin_notes TEXT,
                 started_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                ended_at TEXT
+                ended_at TEXT,
+                last_message_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Create support messages table for chat history
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS support_messages (
+                message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                sender_id INTEGER NOT NULL,
+                sender_type TEXT NOT NULL,
+                message_text TEXT,
+                message_type TEXT DEFAULT 'text',
+                file_id TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+                is_read INTEGER DEFAULT 0,
+                FOREIGN KEY (session_id) REFERENCES support_sessions (session_id)
+            )
+        ''')
+
+        # Create support tickets table for formal ticket system
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS support_tickets (
+                ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                assigned_admin INTEGER,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'general',
+                priority INTEGER DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TEXT,
+                user_rating INTEGER,
+                admin_notes TEXT
+            )
+        ''')
+
+        # Create support analytics table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS support_analytics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                total_sessions INTEGER DEFAULT 0,
+                total_tickets INTEGER DEFAULT 0,
+                avg_response_time INTEGER DEFAULT 0,
+                avg_resolution_time INTEGER DEFAULT 0,
+                satisfaction_score REAL DEFAULT 0.0,
+                admin_id INTEGER,
+                sessions_handled INTEGER DEFAULT 0,
+                avg_admin_response INTEGER DEFAULT 0
+            )
+        ''')
+        
         conn.commit()
 
 def add_user(user_id, username, referrer_code=None):
