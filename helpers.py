@@ -237,9 +237,7 @@ def send_main_menu(bot, chat_id, text, message_id=None):
     }
     
     def get_button_text(base_text, section_key):
-        status = section_statuses.get(section_key, "available")
-        icon = status_icons.get(status, "🟢")
-        return f"{base_text} {icon}"
+        return base_text
     
     markup = types.InlineKeyboardMarkup(row_width=2)
 

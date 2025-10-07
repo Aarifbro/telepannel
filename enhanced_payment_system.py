@@ -100,8 +100,11 @@ def register_enhanced_payment_handlers(bot):
             types.InlineKeyboardButton("❌ Cancel Payment", callback_data="main_menu")
         )
         
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode="HTML")
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
     
     @bot.callback_query_handler(func=lambda call: call.data.startswith("upload_enhanced_ss_"))
     def request_enhanced_screenshot(call):
@@ -133,8 +136,11 @@ def register_enhanced_payment_handlers(bot):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data=f"enhanced_pay_{payment_id}"))
         
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode="HTML")
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
     
     @bot.message_handler(content_types=['photo'])
     def capture_enhanced_screenshot(message):
@@ -281,7 +287,10 @@ def register_enhanced_payment_handlers(bot):
             f"<i>Thank you for your patience!</i>"
         )
         
-        bot.edit_message_text(user_text, call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        try:
+            bot.edit_message_text(user_text, call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        except Exception:
+            bot.send_message(call.message.chat.id, user_text, parse_mode="HTML")
 
     # --- APPROVAL WITH REMARKS SYSTEM ---
     
@@ -311,8 +320,11 @@ def register_enhanced_payment_handlers(bot):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_payment_menu_{payment_id}"))
         
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode="HTML")
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
     
     @bot.message_handler(func=lambda message: admin_remarks_states.get(message.from_user.id, "").startswith("approval_remarks_"))
     def handle_approval_remarks(message):
@@ -355,19 +367,29 @@ def register_enhanced_payment_handlers(bot):
         markup = types.InlineKeyboardMarkup(row_width=1)
         
         # Common rejection reasons
+        # Use short codes for reasons to keep callback_data short
+        reason_map = {
+            "r1": "Screenshot is unclear, invalid, or doesn't show payment details",
+            "r2": "Payment amount doesn't match the required amount",
+            "r3": "Payment ID not found in transaction memo/reference",
+            "r4": "Transaction is too old or doesn't match timeline",
+            "r5": "Unable to verify this transaction in our system",
+            "r6": "Transaction appears suspicious and requires further verification",
+        }
         reasons = [
-            ("📷 Screenshot unclear/invalid", "Screenshot is unclear, invalid, or doesn't show payment details"),
-            ("💰 Payment amount mismatch", "Payment amount doesn't match the required amount"),
-            ("🆔 Payment ID not found", "Payment ID not found in transaction memo/reference"),
-            ("⏰ Transaction too old", "Transaction is too old or doesn't match timeline"),
-            ("🔍 Cannot verify transaction", "Unable to verify this transaction in our system"),
-            ("🚫 Suspicious activity", "Transaction appears suspicious and requires further verification"),
+            ("📷 Screenshot unclear/invalid", "r1"),
+            ("💰 Payment amount mismatch", "r2"),
+            ("🆔 Payment ID not found", "r3"),
+            ("⏰ Transaction too old", "r4"),
+            ("🔍 Cannot verify transaction", "r5"),
+            ("🚫 Suspicious activity", "r6"),
         ]
-        
-        for reason_short, reason_full in reasons:
+        # Truncate payment_id if needed (max 40 chars)
+        short_pid = str(payment_id)[:40]
+        for reason_short, reason_code in reasons:
             markup.add(types.InlineKeyboardButton(
-                reason_short, 
-                callback_data=f"reject_reason_{payment_id}_{reason_full.replace(' ', '_')[:50]}"
+                reason_short,
+                callback_data=f"reject_reason_{short_pid}_{reason_code}"
             ))
         
         markup.add(
@@ -390,10 +412,19 @@ def register_enhanced_payment_handlers(bot):
             return
             
         # Parse callback data
-        data_parts = call.data.split('_', 3)  # reject_reason_{payment_id}_{reason}
+        data_parts = call.data.split('_')  # reject_reason_{payment_id}_{reason_code}
         payment_id = data_parts[2]
-        reason = data_parts[3].replace('_', ' ') if len(data_parts) > 3 else "Invalid payment"
-        
+        reason_code = data_parts[3] if len(data_parts) > 3 else None
+        # Map code to full reason
+        reason_map = {
+            "r1": "Screenshot is unclear, invalid, or doesn't show payment details",
+            "r2": "Payment amount doesn't match the required amount",
+            "r3": "Payment ID not found in transaction memo/reference",
+            "r4": "Transaction is too old or doesn't match timeline",
+            "r5": "Unable to verify this transaction in our system",
+            "r6": "Transaction appears suspicious and requires further verification",
+        }
+        reason = reason_map.get(reason_code, "Invalid payment")
         # Process rejection
         process_enhanced_rejection(call, payment_id, reason)
     
@@ -704,8 +735,11 @@ def register_enhanced_payment_handlers(bot):
             types.InlineKeyboardButton("⬅️ Back to Payment", callback_data=f"enhanced_pay_{payment_id}")
         )
         
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode="HTML")
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
     
     @bot.callback_query_handler(func=lambda call: call.data.startswith("view_payment_details_"))
     def view_payment_details(call):
@@ -773,5 +807,8 @@ def register_enhanced_payment_handlers(bot):
             types.InlineKeyboardButton("⬅️ Back", callback_data=f"admin_payment_menu_{payment_id}")
         )
         
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode="HTML")
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")

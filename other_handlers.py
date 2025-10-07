@@ -40,6 +40,35 @@ CATEGORY_NAMES = {
 RESTRICTED_MEDIA_CATEGORIES = {"custom_ccs", "ready_ccs", "gift_cards"}
 
 def register_other_handlers(bot, user_states, get_products_from_cache, save_products_to_file_and_reload):
+    # --- Bot Stats (Owner & Global Admins) ---
+    @bot.callback_query_handler(func=lambda call: call.data == "owner_bot_stats")
+    def owner_bot_stats(call):
+        user_id = call.from_user.id
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
+            is_global_admin = c.fetchone() is not None
+        if user_id != ADMIN_ID and not is_global_admin:
+            bot.answer_callback_query(call.id, "❌ Only owner or global admin can access this.", show_alert=True)
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM users")
+            total_users = c.fetchone()[0]
+            c.execute("SELECT COUNT(*), COALESCE(SUM(price_usd),0) FROM orders")
+            total_orders, total_revenue = c.fetchone()
+            c.execute("SELECT item_name, COUNT(*) as cnt FROM orders GROUP BY item_name ORDER BY cnt DESC LIMIT 5")
+            top_products = c.fetchall()
+        text = (
+            "📊 <b>Bot Stats</b>\n\n"
+            f"👥 <b>Total Users:</b> {total_users}\n"
+            f"🛒 <b>Total Orders:</b> {total_orders}\n"
+            f"💰 <b>Total Revenue:</b> ${total_revenue:.2f}\n\n"
+            "<b>Top Products:</b>\n" + ("No orders yet." if not top_products else "\n".join([f"{i+1}. {name} ({cnt})" for i, (name, cnt) in enumerate(top_products)]))
+        )
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="owner_panel" if user_id == ADMIN_ID else "admin_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
     # --- One-time legacy merge: bins/methods/bin_methods/bins_methods -> method_bins ---
     try:
         data = load_products()
@@ -114,11 +143,12 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
     # --- Owner Panel ---
     @bot.callback_query_handler(func=lambda call: call.data == "owner_panel")
     def owner_panel_callback(call):
+        print(f"[DEBUG] owner_panel_callback called by user: {call.from_user.id}, ADMIN_ID: {ADMIN_ID}")
         if call.from_user.id != ADMIN_ID:
+            print(f"[DEBUG] Access denied for user: {call.from_user.id}")
             bot.answer_callback_query(call.id, "❌ Only the owner can access this panel.", show_alert=True)
             return
         markup = types.InlineKeyboardMarkup(row_width=2)
-        
         # Owner-exclusive admin management
         markup.add(
             types.InlineKeyboardButton("➕ Add Global Admin", callback_data="owner_add_admin"),
@@ -126,27 +156,99 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
         )
         markup.add(
             types.InlineKeyboardButton("👥 List Global Admins", callback_data="owner_list_admins"),
-            types.InlineKeyboardButton("� User Chat", callback_data="owner_user_chat")
+            types.InlineKeyboardButton("💬 User Chat", callback_data="owner_user_chat")
         )
-        
         # Section admin management
         markup.add(
             types.InlineKeyboardButton("➕ Add Section Admin", callback_data="owner_add_section_admin"),
             types.InlineKeyboardButton("➖ Remove Section Admin", callback_data="owner_remove_section_admin")
         )
         markup.add(
-            types.InlineKeyboardButton("👥 List Section Admins", callback_data="owner_list_section_admins"),
-            types.InlineKeyboardButton("🎛️ Button Status Manager", callback_data="status_manager")
+            types.InlineKeyboardButton("👥 List Section Admins", callback_data="owner_list_section_admins")
         )
-        
-        # Quick access to admin tools & stats
+        # Section Status Manager and quick access to admin tools & stats
         markup.add(
+            types.InlineKeyboardButton("🛠️ Section Status Manager", callback_data="section_status_manager"),
             types.InlineKeyboardButton("⚙️ Admin Tools", callback_data="admin_panel"),
             types.InlineKeyboardButton("📊 Bot Stats", callback_data="owner_bot_stats")
         )
+        try:
+            bot.edit_message_text("<b>👑 Owner Control Panel</b>\n\nSelect an action below:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        except Exception as e:
+            print(f"[ERROR] Failed to edit message for owner panel: {e}")
+            bot.send_message(call.message.chat.id, f"[ERROR] Could not open owner panel: {e}")
+    # --- Section Status Manager (Owner & Global Admins) ---
+    @bot.callback_query_handler(func=lambda call: call.data == "section_status_manager")
+    def section_status_manager(call):
+        # Only owner or global admin
+        user_id = call.from_user.id
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
+            is_global_admin = c.fetchone() is not None
+        if user_id != ADMIN_ID and not is_global_admin:
+            bot.answer_callback_query(call.id, "❌ Only owner or global admin can access this.", show_alert=True)
+            return
+        # Load section statuses
+        try:
+            with open("section_status.json", "r") as f:
+                statuses = json.load(f)
+        except Exception:
+            statuses = {}
+        # Define all sections to manage
+        sections = [
+            ("cc_shop", "🛍️ CC Shop"),
+            ("bins_methods", "💎 BIN+Method Bundle"),
+            ("gift_cards", "🎁 Gift Cards"),
+            ("hacks", "🔧 Hacks"),
+            ("dumps", "💾 Dumps"),
+            ("rdp", "🖥️ RDPs"),
+            ("support", "🆘 Support"),
+            ("ai_search", "🤖 AI Search"),
+        ]
+        status_icons = {
+            "available": "🟢 Available",
+            "maintenance": "🛠️ Maintenance",
+            "coming_soon": "🟡 Coming Soon",
+            "disabled": "🔴 Disabled"
+        }
+        text = "<b>Section Status Manager</b>\n\nToggle the status of each section.\n\n"
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for key, label in sections:
+            status = statuses.get(key, "available")
+            icon = status_icons.get(status, status)
+            markup.add(types.InlineKeyboardButton(f"{label}: {icon}", callback_data=f"toggle_section_status_{key}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="owner_panel" if user_id == ADMIN_ID else "admin_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_section_status_"))
+    def toggle_section_status(call):
+        user_id = call.from_user.id
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
+            is_global_admin = c.fetchone() is not None
+        if user_id != ADMIN_ID and not is_global_admin:
+            bot.answer_callback_query(call.id, "❌ Only owner or global admin can access this.", show_alert=True)
+            return
+        section_key = call.data.replace("toggle_section_status_", "")
+        # Load and update status
+        try:
+            with open("section_status.json", "r") as f:
+                statuses = json.load(f)
+        except Exception:
+            statuses = {}
+        current = statuses.get(section_key, "available")
+        order = ["available", "maintenance", "coming_soon", "disabled"]
+        next_status = order[(order.index(current) + 1) % len(order)]
+        statuses[section_key] = next_status
+        with open("section_status.json", "w") as f:
+            json.dump(statuses, f, indent=2)
+        bot.answer_callback_query(call.id, f"{section_key} → {next_status}")
+        # Refresh manager
+        section_status_manager(call)
         
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
-        bot.edit_message_text("👑 <b>Owner Panel</b>\n\nManage global and section-based admins. Section admins can only manage their assigned section (e.g., Hacks).", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        # (Removed misplaced markup/edit_message_text block)
 
     # Section Admin Management
     @bot.callback_query_handler(func=lambda call: call.data == "owner_add_section_admin")
@@ -1772,64 +1874,7 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         except Exception:
             pass
 
-    # ----- Status manager redirect -----
-    @bot.callback_query_handler(func=lambda call: call.data == "status_manager")
-    def status_manager(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True)
-            return
-        # Import DB-backed helpers lazily to avoid circular import
-        from admin_meta_db import list_all_statuses, set_section_status
-        # Determine ordered list relative to SECTION_STATUS_OPTIONS duplication (mirror constant from main)
-        status_order = ["coming_soon", "error", "maintenance", "available"]
-        existing = {k: v for k, v in list_all_statuses()}
-        # Define canonical section keys & pretty names
-        sections = [
-            ("gift_cards", "Gift Cards"),
-            ("dumps", "Dumps"),
-            ("hacks", "Hacks"),
-            ("cc", "Credit Cards"),
-            ("bins", "BINs"),
-            ("rdp", "RDP"),
-            ("methods", "Methods"),
-            ("other", "Other"),
-        ]
-        text = "🛠️ <b>Section Status Manager</b>\n\nTap a button to cycle a section through: Coming Soon → Error → Maintenance → Available.\n"
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for key, label in sections:
-            cur = existing.get(key, "coming_soon")
-            emoji = {
-                "coming_soon": "🟡",
-                "error": "🔴",
-                "maintenance": "🛠️",
-                "available": "🟢"
-            }.get(cur, "🟡")
-            # Each button cycles the status
-            markup.add(types.InlineKeyboardButton(f"{emoji} {label}: {cur}", callback_data=f"cycle_status_{key}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("cycle_status_"))
-    def cycle_status(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True)
-            return
-        from admin_meta_db import list_all_statuses, set_section_status
-        key = call.data.replace("cycle_status_", "")
-        order = ["coming_soon", "error", "maintenance", "available"]
-        existing = {k: v for k, v in list_all_statuses()}
-        cur = existing.get(key, "coming_soon")
-        try:
-            nxt = order[(order.index(cur) + 1) % len(order)]
-        except Exception:
-            nxt = "coming_soon"
-        set_section_status(key, nxt)
-        bot.answer_callback_query(call.id, f"{key} → {nxt}")
-        # Re-render manager
-        try:
-            status_manager(call)
-        except Exception:
-            pass
+    # Status manager and related handlers removed
 
     # ----- Manage Admins (list & remove) -----
     @bot.callback_query_handler(func=lambda call: call.data == "admin_manage_admins")
@@ -2070,14 +2115,12 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         text = (
             "⚙️ <b>Settings</b>\n\n"
             "Quick shortcuts to management tools:\n"
-            "• Status Manager (toggle section availability)\n"
             "• Media Manager (GIF pools)\n"
             "• Manage Admins & Pro Keys\n\n"
             "Planned additions: pricing rules, auto-expiry, audit exports."
         )
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("🎛️ Status Manager", callback_data="status_manager"),
             types.InlineKeyboardButton("🖼️ Media Manager", callback_data="admin_media_menu"),
             types.InlineKeyboardButton("🔑 Pro Keys", callback_data="admin_keys_menu"),
             types.InlineKeyboardButton("🧩 Manage Admins", callback_data="admin_manage_admins")
@@ -2314,9 +2357,34 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         if call.from_user.id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
             return
-        
-        user_id = call.data.replace("admin_send_msg_", "")
-        bot.answer_callback_query(call.id, "This feature is coming soon!", show_alert=True)
+
+        user_id = int(call.data.replace("admin_send_msg_", ""))
+        user_states[call.from_user.id] = f"admin_sending_msg_{user_id}"
+        bot.answer_callback_query(call.id)
+        prompt = (
+            f"✉️ <b>Send Message to User</b>\n\n"
+            f"Enter the message you want to send to <code>{user_id}</code>.\n\n"
+            f"<i>Type your message and send. Use /cancel to abort.</i>"
+        )
+        bot.send_message(call.message.chat.id, prompt, parse_mode="HTML")
+
+    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, '').startswith('admin_sending_msg_'))
+    def handle_admin_send_message(message):
+        """Handle admin's message to user"""
+        state = user_states.get(message.from_user.id, '')
+        if not state:
+            return
+        user_id = int(state.replace('admin_sending_msg_', ''))
+        if message.text and message.text.strip().lower() == '/cancel':
+            del user_states[message.from_user.id]
+            bot.reply_to(message, "❌ Message sending cancelled.")
+            return
+        try:
+            bot.send_message(user_id, f"📩 <b>Message from Admin</b>\n\n{message.text}", parse_mode="HTML")
+            bot.reply_to(message, f"✅ Message sent to user <code>{user_id}</code>.", parse_mode="HTML")
+        except Exception as e:
+            bot.reply_to(message, f"❌ Failed to send message: {e}")
+        del user_states[message.from_user.id]
     
     @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_user_orders_"))
     def admin_view_user_orders(call):

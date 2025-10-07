@@ -12,7 +12,6 @@ from database import (
     init_db, add_user, get_user_credits, update_user_credits, 
     generate_pro_key, get_all_pro_keys, validate_and_use_pro_key
 )
-from status_handler import get_section_status, handle_unavailable_section
 from helpers import (
     check_force_join, notify_admin, 
     add_gif_to_pool, send_main_menu, send_random_animation
@@ -120,6 +119,7 @@ def register_all_handlers(bot_instance):
     # Register handlers from other modules
     # BINs now unified under bundle/method_bins search; legacy bin_handler removed.
     register_payment_handlers(bot_instance)
+    # Register other handlers and ensure owner_panel_callback is registered on the main bot instance
     register_other_handlers(bot_instance, user_states, get_products_from_cache, save_products_to_file_and_reload)
     register_perfect_support_handlers(bot_instance)
     register_admin_communication_handlers(bot_instance)
@@ -630,44 +630,6 @@ def register_all_handlers(bot_instance):
             status_label = get_section_status_label("gift_cards")
             bot_instance.edit_message_text(f"🎁 Gift Cards\n\n<b>Status:</b> {status_label}", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    @bot_instance.callback_query_handler(func=lambda call: call.data == "status_manage")
-    def status_manage_panel(call):
-        if call.from_user.id != ADMIN_ID:
-            bot_instance.answer_callback_query(call.id, "❌ Only the owner can access this.", show_alert=True)
-            return
-        markup = types.InlineKeyboardMarkup()
-        for section_key, section_label in SECTION_KEYS:
-            status_label = get_section_status_label(section_key)
-            markup.add(types.InlineKeyboardButton(f"{section_label}: {status_label}", callback_data=f"set_status_{section_key}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
-        bot_instance.edit_message_text("<b>Status Manage</b>\n\nSelect a section to update its status:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("set_status_"))
-    def set_section_status_panel(call):
-        if call.from_user.id != ADMIN_ID:
-            bot_instance.answer_callback_query(call.id, "❌ Only the owner can access this.", show_alert=True)
-            return
-        section_key = call.data.replace("set_status_", "")
-        markup = types.InlineKeyboardMarkup()
-        for status_key, status_label in SECTION_STATUS_OPTIONS:
-            markup.add(types.InlineKeyboardButton(status_label, callback_data=f"set_section_status_{section_key}_{status_key}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="status_manage"))
-        current_status = get_section_status(section_key)
-        current_label = next((label for k, label in SECTION_STATUS_OPTIONS if k == current_status), "🟡 Coming Soon")
-        section_label = next((lbl for k, lbl in SECTION_KEYS if k == section_key), section_key)
-        bot_instance.edit_message_text(f"<b>Status Manage</b>\n\nSection: {section_label}\nCurrent status: {current_label}\n\nChoose a new status:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("set_section_status_"))
-    def set_section_status_callback(call):
-        if call.from_user.id != ADMIN_ID:
-            bot_instance.answer_callback_query(call.id, "❌ Only the owner can access this.", show_alert=True)
-            return
-        parts = call.data.replace("set_section_status_", "").split("_")
-        section_key = parts[0]
-        status_key = "_".join(parts[1:])
-        set_section_status(section_key, status_key)
-        bot_instance.answer_callback_query(call.id, "Section status updated!", show_alert=True)
-        status_manage_panel(call)
 
     # Dumps
     @bot_instance.callback_query_handler(func=lambda call: call.data == "dumps_menu")
@@ -719,8 +681,7 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data == "ai_search")
     def ai_search_prompt(call):
         """Prompts the user to enter their search query."""
-        if handle_unavailable_section(bot_instance, call, "ai_search"):
-            return
+        # Section gating now handled via DB-backed status; legacy check removed
         user_states[call.from_user.id] = "awaiting_ai_search"
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("⬅️ Cancel", callback_data="main_menu"))
