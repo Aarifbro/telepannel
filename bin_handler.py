@@ -1,3 +1,13 @@
+"""DEPRECATED MODULE
+
+This bin_handler previously provided a standalone BIN listing UI.
+After unification of BINs + Methods into the unified bundle / method_bins flow
+and indexed dynamic menus in other_handlers.py, this file is no longer imported.
+
+Retained temporarily for reference and potential future extraction of blur_bin logic.
+Safe to delete once repository history is established.
+"""
+
 import json
 from telebot import types
 from database import load_products

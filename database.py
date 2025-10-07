@@ -134,6 +134,51 @@ def init_db():
             )
         ''')
 
+        # --- Schema Migration for 'support_sessions' table ---
+        cursor.execute("PRAGMA table_info(support_sessions)")
+        support_columns = [column[1] for column in cursor.fetchall()]
+
+        # Backward compatibility: earlier versions lacked category/priority/subject columns
+        # Ensure these exist for analytics and session creation logic in perfect_support.py
+        if 'category' not in support_columns:
+            print("Updating database schema: Adding 'category' to 'support_sessions' (default 'general')...")
+            try:
+                cursor.execute("ALTER TABLE support_sessions ADD COLUMN category TEXT DEFAULT 'general'")
+            except Exception as e:
+                print(f"Warning: could not add category column: {e}")
+        if 'priority' not in support_columns:
+            print("Updating database schema: Adding 'priority' to 'support_sessions' (default 1)...")
+            try:
+                cursor.execute("ALTER TABLE support_sessions ADD COLUMN priority INTEGER DEFAULT 1")
+            except Exception as e:
+                print(f"Warning: could not add priority column: {e}")
+        if 'subject' not in support_columns:
+            print("Updating database schema: Adding 'subject' to 'support_sessions' ...")
+            try:
+                cursor.execute("ALTER TABLE support_sessions ADD COLUMN subject TEXT")
+            except Exception as e:
+                print(f"Warning: could not add subject column: {e}")
+
+        if 'first_response_time' not in support_columns:
+            print("Updating database schema: Adding 'first_response_time' to 'support_sessions'...")
+            cursor.execute("ALTER TABLE support_sessions ADD COLUMN first_response_time INTEGER")
+        if 'resolution_time' not in support_columns:
+            print("Updating database schema: Adding 'resolution_time' to 'support_sessions'...")
+            cursor.execute("ALTER TABLE support_sessions ADD COLUMN resolution_time INTEGER")
+        if 'user_rating' not in support_columns:
+            print("Updating database schema: Adding 'user_rating' to 'support_sessions'...")
+            cursor.execute("ALTER TABLE support_sessions ADD COLUMN user_rating INTEGER")
+        if 'admin_notes' not in support_columns:
+            print("Updating database schema: Adding 'admin_notes' to 'support_sessions'...")
+            cursor.execute("ALTER TABLE support_sessions ADD COLUMN admin_notes TEXT")
+        if 'last_message_at' not in support_columns:
+            print("Updating database schema: Adding 'last_message_at' to 'support_sessions'...")
+            cursor.execute("ALTER TABLE support_sessions ADD COLUMN last_message_at TEXT")
+        if 'updated_at' not in support_columns:
+            print("Updating database schema: Adding 'updated_at' to 'support_sessions'...")
+            cursor.execute("ALTER TABLE support_sessions ADD COLUMN updated_at TEXT")
+
+
         # Create support messages table for chat history
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS support_messages (

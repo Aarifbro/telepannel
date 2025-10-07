@@ -639,10 +639,26 @@ An administrator will now verify your transaction. You will be notified once it 
         if len(parts) < 3:
             bot.answer_callback_query(call.id, "Invalid rejection data", show_alert=True)
             return
+        # Ignore enhanced payment quick reject callbacks which now use enhanced_quick_reject_ prefix,
+        # but older messages may still carry quick_reject_enhanced_ and would otherwise mis-route here
+        if parts[2].startswith("enhanced"):
+            # Attempt to salvage old enhanced quick reject callback: format enhanced_{paymentId}
+            try:
+                enhanced_parts = parts[2].split('_', 1)
+                if len(enhanced_parts) == 2:
+                    payment_id = enhanced_parts[1]
+                    from enhanced_payment_system import process_enhanced_rejection
+                    default_reason = "Screenshot unclear or payment details cannot be verified. Please upload a clearer screenshot."
+                    process_enhanced_rejection(bot, call, payment_id, default_reason)
+                    return
+            except Exception:
+                pass
+            bot.answer_callback_query(call.id, "Outdated payment message. Ask user to resubmit.", show_alert=True)
+            return
             
         payment_id = parts[2].split('_')[0]
         reason = '_'.join(parts[2].split('_')[1:])
-        
+
         # Process the rejection directly
         process_rejection_with_reason(bot, call, payment_id, reason)
 

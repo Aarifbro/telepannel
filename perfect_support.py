@@ -1,7 +1,8 @@
 import json
 import sqlite3
 import time
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
+import threading
 from telebot import types
 from config import DB_NAME, ADMIN_ID
 from helpers import send_random_animation
@@ -28,7 +29,7 @@ PRIORITY_LEVELS = {
 AUTO_RESPONSES = {
     'payment': {
         'keywords': ['payment', 'paid', 'transaction', 'crypto', 'bitcoin', 'approve', 'pending'],
-        'response': '''🤖 **Payment Support**
+        'response': ''''🤖 **Payment Support**
 
 I see you're having payment-related issues. Here's what I can help with:
 
@@ -45,7 +46,7 @@ If your payment is still pending after 30 minutes, please continue with live cha
     },
     'order': {
         'keywords': ['order', 'delivery', 'received', 'item', 'product', 'download'],
-        'response': '''🤖 **Order Support**
+        'response': ''''🤖 **Order Support**
 
 I can help with order-related questions:
 
@@ -62,7 +63,7 @@ If you still can't find your order, please continue with live chat.'''
     },
     'technical': {
         'keywords': ['error', 'bug', 'broken', 'not working', 'issue', 'problem', 'crash'],
-        'response': '''🤖 **Technical Support**
+        'response': ''''🤖 **Technical Support**
 
 I can help troubleshoot technical issues:
 
@@ -79,7 +80,7 @@ I can help troubleshoot technical issues:
     },
     'account': {
         'keywords': ['account', 'login', 'username', 'profile', 'banned', 'suspended'],
-        'response': '''🤖 **Account Support**
+        'response': ''''🤖 **Account Support**
 
 Account-related assistance:
 
@@ -95,6 +96,47 @@ Account-related assistance:
 For account restrictions or bans, please use live chat.'''
     }
 }
+
+# -------------------------------
+# Global Settings & Template Helpers
+# -------------------------------
+SETTINGS_FILE = "support_settings.json"
+TEMPLATES_FILE = "support_templates.json"
+
+def load_support_settings():
+    defaults = {
+        "auto_assign": False,
+        "notify_all_admins": True,
+        "auto_close_hours": 72
+    }
+    try:
+        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            defaults.update(data or {})
+    except Exception:
+        pass
+    return defaults
+
+def save_support_settings(data):
+    try:
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Could not save support settings: {e}")
+
+def load_chat_templates():
+    try:
+        with open(TEMPLATES_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def save_chat_templates(templates):
+    try:
+        with open(TEMPLATES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(templates, f, indent=2)
+    except Exception as e:
+        print(f"Could not save templates: {e}")
 
 def get_support_analytics(admin_id=None, days=7):
     """Get support analytics for dashboard"""
@@ -283,6 +325,14 @@ def register_perfect_support_handlers(bot):
                     auto_response = AUTO_RESPONSES[category]['response']
                     create_support_message(session_id, 0, 'system', auto_response, 'auto_response')
                     bot.send_message(user_id, f"🤖 **Quick Help**\n\n{auto_response}", parse_mode="Markdown")
+
+                # Auto-assign if setting enabled
+                try:
+                    settings = load_support_settings()
+                    if settings.get('auto_assign'):
+                        _auto_assign_session(bot, session_id, category)
+                except Exception as e:
+                    print(f"Auto-assign failed: {e}")
         
         # Set user state for chat
         if not hasattr(bot, '_user_states'):
@@ -438,6 +488,462 @@ def register_perfect_support_handlers(bot):
         
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
                              reply_markup=markup, parse_mode="Markdown")
+
+    # =============================
+    # Additional Admin Ticket & Settings Functionality
+    # =============================
+
+
+    # -------- Auto Assign & Auto Close Helpers --------
+    def _auto_assign_session(bot_obj, session_id, category):
+        """Assign a session to the least-loaded admin if unassigned."""
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("SELECT admin_id FROM support_sessions WHERE session_id=?", (session_id,))
+                row = c.fetchone()
+                if not row or row[0]:
+                    return  # Already assigned or missing
+                # Get admins load
+                c.execute(
+                    """
+                    SELECT a.user_id, COUNT(s.session_id) as load
+                    FROM admins a
+                    LEFT JOIN support_sessions s ON s.admin_id = a.user_id AND s.status IN ('open','assigned','in_progress')
+                    GROUP BY a.user_id
+                    ORDER BY load ASC, a.user_id ASC
+                    LIMIT 1
+                    """
+                )
+                target = c.fetchone()
+                if not target:
+                    return
+                target_admin = target[0]
+                c.execute("UPDATE support_sessions SET admin_id=?, status='assigned', updated_at=CURRENT_TIMESTAMP WHERE session_id=? AND (admin_id IS NULL)", (target_admin, session_id))
+                conn.commit()
+            # Notify admin & user
+            try:
+                bot_obj.send_message(target_admin, f"🤖 Auto-assigned to support chat #{session_id} (Category: {SUPPORT_CATEGORIES.get(category, category)})")
+            except Exception:
+                pass
+            try:
+                with sqlite3.connect(DB_NAME) as conn:
+                    c = conn.cursor(); c.execute("SELECT user_id FROM support_sessions WHERE session_id=?", (session_id,)); urow = c.fetchone()
+                if urow:
+                    bot_obj.send_message(urow[0], "🟢 A support admin has been automatically assigned to your chat.")
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"_auto_assign_session error: {e}")
+
+    def _auto_close_worker():
+        """Periodic worker to auto-close stale chats based on settings."""
+        while True:
+            try:
+                settings = load_support_settings()
+                hours = int(settings.get('auto_close_hours', 72) or 72)
+                cutoff = datetime.now(UTC) - timedelta(hours=hours)
+                with sqlite3.connect(DB_NAME) as conn:
+                    c = conn.cursor()
+                    # Close stale sessions
+                    c.execute(
+                        """
+                        UPDATE support_sessions
+                        SET status='closed', ended_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+                        WHERE status IN ('open','assigned','in_progress')
+                          AND COALESCE(last_message_at, started_at) < ?
+                        """,
+                        (cutoff.isoformat(),)
+                    )
+                    closed = c.rowcount
+                    conn.commit()
+                if closed:
+                    print(f"Auto-close: closed {closed} stale sessions older than {hours}h")
+            except Exception as e:
+                print(f"Auto-close worker error: {e}")
+            # Sleep one hour
+            time.sleep(3600)
+
+    # Start background worker only once
+    if not hasattr(bot, '_support_auto_close_started'):
+        bot._support_auto_close_started = True
+        threading.Thread(target=_auto_close_worker, daemon=True).start()
+
+    # ----- Pending Tickets (Admin) -----
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_pending_tickets")
+    def admin_pending_tickets(call):
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor(); c.execute("SELECT 1 FROM admins WHERE user_id=?", (call.from_user.id,))
+                if not c.fetchone():
+                    bot.answer_callback_query(call.id, "❌ Access denied", show_alert=True)
+                    return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT ticket_id, title, category, priority, status, created_at, assigned_admin
+                FROM support_tickets
+                WHERE status IN ('open','assigned','in_progress')
+                ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'assigned' THEN 1 ELSE 2 END, priority DESC, created_at ASC
+                LIMIT 25
+            """)
+            rows = c.fetchall()
+        text = "🎫 **Pending Tickets**\n\n"
+        if not rows:
+            text += "No pending tickets."
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        status_icon_map = { 'open':'🟡', 'assigned':'🔵', 'in_progress':'🛠️' }
+        prio_icon = lambda p: '🔴' if p>=3 else '🟡' if p==2 else '🟢'
+        for row in rows:
+            tid, title, cat, pri, status, created, assigned_admin = row
+            icon = status_icon_map.get(status,'❔') + prio_icon(pri)
+            short = (title[:32] + '…') if len(title)>35 else title
+            assigned_flag = ' 👤' if assigned_admin else ''
+            markup.add(types.InlineKeyboardButton(f"{icon} #{tid} {short}{assigned_flag}", callback_data=f"admin_ticket_{tid}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_support_dashboard"))
+        safe_edit = False
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+            safe_edit = True
+        except Exception:
+            pass
+        if not safe_edit:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
+
+    # ----- View / Manage Single Ticket -----
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_ticket_"))
+    def admin_view_ticket(call):
+        try:
+            ticket_id = int(call.data.split('_')[-1])
+        except Exception:
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT ticket_id, user_id, assigned_admin, title, description, category, priority, status, created_at, updated_at
+                FROM support_tickets WHERE ticket_id=?
+            """, (ticket_id,))
+            t = c.fetchone()
+        if not t:
+            bot.answer_callback_query(call.id, "Ticket not found", show_alert=True)
+            return
+        (tid, user_id, assigned_admin, title, description, category, priority, status, created_at, updated_at) = t
+        cat_name = SUPPORT_CATEGORIES.get(category, category)
+        prio_name = PRIORITY_LEVELS.get(priority, str(priority))
+        status_icons = {'open':'🟡 Open','assigned':'🔵 Assigned','in_progress':'🛠️ In Progress','resolved':'✅ Resolved','closed':'⚫ Closed'}
+        status_label = status_icons.get(status, status)
+        desc_short = description[:600] + ('…' if len(description)>600 else '')
+        text = (
+            f"🎫 **Ticket #{tid}**\n"
+            f"**Title:** {title}\n"
+            f"**User:** `{user_id}`\n"
+            f"**Category:** {cat_name}\n"
+            f"**Priority:** {prio_name}\n"
+            f"**Status:** {status_label}\n"
+            f"**Created:** {created_at[:16]}\n"
+            f"**Updated:** {updated_at[:16]}\n\n"
+            f"**Description:**\n{desc_short}"
+        )
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        if status in ('open','assigned','in_progress'):
+            if not assigned_admin:
+                markup.add(types.InlineKeyboardButton("🧑‍💻 Assign to Me", callback_data=f"ticket_assign_{tid}"))
+            elif assigned_admin == call.from_user.id and status == 'assigned':
+                markup.add(types.InlineKeyboardButton("🛠️ Mark In Progress", callback_data=f"ticket_progress_{tid}"))
+            if assigned_admin == call.from_user.id and status in ('in_progress','assigned'):
+                markup.add(types.InlineKeyboardButton("✅ Resolve", callback_data=f"ticket_resolve_{tid}"))
+        if status == 'resolved':
+            markup.add(types.InlineKeyboardButton("🔒 Close", callback_data=f"ticket_close_{tid}"))
+        if status not in ('closed',):
+            markup.add(types.InlineKeyboardButton("📝 Add Note", callback_data=f"ticket_note_{tid}"))
+        markup.add(types.InlineKeyboardButton("💬 Start Chat", callback_data="support_chat_new"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_pending_tickets"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    # Ticket actions
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ticket_assign_"))
+    def ticket_assign(call):
+        tid = int(call.data.split('_')[-1])
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor(); c.execute("UPDATE support_tickets SET assigned_admin=?, status='assigned', updated_at=CURRENT_TIMESTAMP WHERE ticket_id=? AND (assigned_admin IS NULL OR assigned_admin=?)", (call.from_user.id, tid, call.from_user.id)); conn.commit()
+        bot.answer_callback_query(call.id, "Assigned")
+        admin_view_ticket(call)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ticket_progress_"))
+    def ticket_progress(call):
+        tid = int(call.data.split('_')[-1])
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor(); c.execute("UPDATE support_tickets SET status='in_progress', updated_at=CURRENT_TIMESTAMP WHERE ticket_id=?", (tid,)); conn.commit()
+        bot.answer_callback_query(call.id, "In Progress")
+        admin_view_ticket(call)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ticket_resolve_"))
+    def ticket_resolve(call):
+        tid = int(call.data.split('_')[-1])
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor(); c.execute("UPDATE support_tickets SET status='resolved', updated_at=CURRENT_TIMESTAMP, resolved_at=CURRENT_TIMESTAMP WHERE ticket_id=?", (tid,)); conn.commit()
+        bot.answer_callback_query(call.id, "Resolved")
+        admin_view_ticket(call)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ticket_close_"))
+    def ticket_close(call):
+        tid = int(call.data.split('_')[-1])
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor(); c.execute("UPDATE support_tickets SET status='closed', updated_at=CURRENT_TIMESTAMP WHERE ticket_id=?", (tid,)); conn.commit()
+        bot.answer_callback_query(call.id, "Closed")
+        admin_view_ticket(call)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ticket_note_"))
+    def ticket_note_prompt(call):
+        tid = int(call.data.split('_')[-1])
+        if not hasattr(bot, '_user_states'): bot._user_states = {}
+        bot._user_states[call.from_user.id] = f"awaiting_ticket_note_{tid}"
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, f"📝 Send the note text for ticket #{tid}.", parse_mode="Markdown")
+
+    @bot.message_handler(func=lambda m: hasattr(bot, '_user_states') and isinstance(bot._user_states.get(m.from_user.id,''), str) and bot._user_states.get(m.from_user.id,'').startswith('awaiting_ticket_note_'))
+    def handle_ticket_note(message):
+        state = bot._user_states.get(message.from_user.id)
+        tid = int(state.split('_')[-1])
+        note = message.text.strip()[:500]
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor(); c.execute("UPDATE support_tickets SET admin_notes = COALESCE(admin_notes,'') || ? , updated_at=CURRENT_TIMESTAMP WHERE ticket_id=?", ("\n"+note, tid)); conn.commit()
+        bot._user_states.pop(message.from_user.id, None)
+        bot.reply_to(message, "✅ Note added.")
+        # Re-render ticket - create mock call-like object
+        call_like = types.CallbackQuery(id=None, from_user=message.from_user, data=f"admin_ticket_{tid}", chat_instance=None, message=message, json_string=None)
+        admin_view_ticket(call_like)
+
+    # ----- Support Agents Overview -----
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_support_agents")
+    def admin_support_agents(call):
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT a.user_id, u.username,
+                       COUNT(DISTINCT s.session_id) as sessions,
+                       SUM(CASE WHEN s.user_rating IS NOT NULL THEN 1 ELSE 0 END) as rated,
+                       AVG(CAST(s.user_rating as FLOAT)) as avg_rating,
+                       COUNT(DISTINCT t.ticket_id) as tickets
+                FROM admins a
+                LEFT JOIN users u ON a.user_id = u.user_id
+                LEFT JOIN support_sessions s ON s.admin_id = a.user_id
+                LEFT JOIN support_tickets t ON t.assigned_admin = a.user_id
+                GROUP BY a.user_id
+                ORDER BY sessions DESC
+            """)
+            rows = c.fetchall()
+        text = "👥 **Support Agents**\n\n"
+        if not rows:
+            text += "No agents found."
+        else:
+            for r in rows:
+                uid, uname, sessions, rated, avg_rating, tickets = r
+                text += f"• `{uid}` {('@'+uname) if uname else ''} – Chats: {sessions or 0} | Tickets: {tickets or 0} | Rating: {(avg_rating or 0):.1f}\n"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_support_dashboard"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    # ----- Chat Templates Management -----
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_chat_templates")
+    def admin_chat_templates(call):
+        templates = load_chat_templates()
+        text = "📝 **Chat Templates**\n\n"
+        if not templates:
+            text += "No templates yet."
+        else:
+            for idx, tpl in enumerate(templates, start=1):
+                preview = tpl[:60] + ('…' if len(tpl)>60 else '')
+                text += f"{idx}. {preview}\n"
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(types.InlineKeyboardButton("➕ Add", callback_data="template_add"), types.InlineKeyboardButton("➖ Delete", callback_data="template_delete"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_support_dashboard"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    # Inline template menu for a specific chat
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("tpl_menu_"))
+    def tpl_menu_for_chat(call):
+        try:
+            session_id = int(call.data.split('_')[-1])
+        except Exception:
+            return
+        templates = load_chat_templates()
+        if not templates:
+            bot.answer_callback_query(call.id, "No templates", show_alert=True)
+            return
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for idx, tpl in enumerate(templates, start=1):
+            label = (tpl[:45] + '…') if len(tpl) > 48 else tpl
+            markup.add(types.InlineKeyboardButton(f"{idx}. {label}", callback_data=f"tpl_send_{session_id}_{idx}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data=f"admin_chat_{session_id}"))
+        bot.edit_message_text("📝 Select a template to send:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("tpl_send_"))
+    def tpl_send_to_chat(call):
+        try:
+            parts = call.data.split('_')
+            session_id = int(parts[2])
+            idx = int(parts[3])
+        except Exception:
+            return
+        templates = load_chat_templates()
+        if idx < 1 or idx > len(templates):
+            bot.answer_callback_query(call.id, "Invalid template", show_alert=True)
+            return
+        text = templates[idx-1]
+        # Determine user and send
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id FROM support_sessions WHERE session_id=?", (session_id,))
+            row = c.fetchone()
+        if not row:
+            bot.answer_callback_query(call.id, "Session missing", show_alert=True)
+            return
+        user_id = row[0]
+        create_support_message(session_id, call.from_user.id, 'admin', text, 'text')
+        try:
+            bot.send_message(user_id, text)
+        except Exception:
+            pass
+        bot.answer_callback_query(call.id, "Sent")
+        # Trigger existing admin_chat_{session_id} handler by editing message to have that callback (simulate button press)
+        try:
+            # Reuse admin_chat_view via crafted callback only if defined later; fallback to minimal notice
+            from telebot.types import CallbackQuery as _CQ
+            fake = _CQ(id='0', from_user=call.from_user, data=f"admin_chat_{session_id}", chat_instance=None, message=call.message, json_string=None)
+            try:
+                admin_chat_view(fake)  # type: ignore
+            except NameError:
+                bot.send_message(call.message.chat.id, f"Template sent to chat #{session_id}.")
+        except Exception:
+            pass
+
+    @bot.callback_query_handler(func=lambda call: call.data == "template_add")
+    def template_add(call):
+        if not hasattr(bot, '_user_states'): bot._user_states = {}
+        bot._user_states[call.from_user.id] = 'awaiting_new_template'
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "✍️ Send the template text (max 500 chars).", parse_mode="Markdown")
+
+    @bot.message_handler(func=lambda m: hasattr(bot,'_user_states') and bot._user_states.get(m.from_user.id)=='awaiting_new_template')
+    def handle_new_template(message):
+        templates = load_chat_templates()
+        text = message.text.strip()[:500]
+        templates.append(text)
+        save_chat_templates(templates)
+        bot._user_states.pop(message.from_user.id, None)
+        bot.reply_to(message, "✅ Template added.")
+        call_like = types.CallbackQuery(id=None, from_user=message.from_user, data="admin_chat_templates", chat_instance=None, message=message, json_string=None)
+        admin_chat_templates(call_like)
+
+    @bot.callback_query_handler(func=lambda call: call.data == "template_delete")
+    def template_delete(call):
+        templates = load_chat_templates()
+        if not templates:
+            bot.answer_callback_query(call.id, "No templates", show_alert=True)
+            return
+        if not hasattr(bot,'_user_states'): bot._user_states = {}
+        bot._user_states[call.from_user.id] = 'awaiting_delete_template'
+        bot.send_message(call.message.chat.id, "Send the template number to delete (e.g., 1).", parse_mode="Markdown")
+
+    @bot.message_handler(func=lambda m: hasattr(bot,'_user_states') and bot._user_states.get(m.from_user.id)=='awaiting_delete_template')
+    def handle_delete_template(message):
+        templates = load_chat_templates()
+        try:
+            idx = int(message.text.strip()) - 1
+            if idx < 0 or idx >= len(templates):
+                raise ValueError
+        except Exception:
+            bot.reply_to(message, "❌ Invalid number.")
+            return
+        removed = templates.pop(idx)
+        save_chat_templates(templates)
+        bot._user_states.pop(message.from_user.id, None)
+        bot.reply_to(message, f"✅ Deleted template #{idx+1}.")
+        call_like = types.CallbackQuery(id=None, from_user=message.from_user, data="admin_chat_templates", chat_instance=None, message=message, json_string=None)
+        admin_chat_templates(call_like)
+
+    # ----- Support Settings Toggles -----
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("settings_"))
+    def support_settings_actions(call):
+        action = call.data
+        settings = load_support_settings()
+        # Helper render to avoid forward reference complaints
+        def _render_settings(call_obj):
+            text = (
+                "⚙️ **Support Settings**\n\n"
+                f"Auto-Assign: {'ON' if settings.get('auto_assign') else 'OFF'}\n"
+                f"Notify All Admins: {'ON' if settings.get('notify_all_admins') else 'OFF'}\n"
+                f"Auto-Close Hours: {settings.get('auto_close_hours')}\n\n"
+                "Configure various aspects of the support system:"
+            )
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                types.InlineKeyboardButton("🤖 Toggle Auto-Assign", callback_data="settings_toggle_auto_assign"),
+                types.InlineKeyboardButton("🤖 Auto-Response Info", callback_data="settings_auto_response"),
+                types.InlineKeyboardButton("⏰ Response Time Targets", callback_data="settings_response_time"),
+                types.InlineKeyboardButton("📝 Chat Templates", callback_data="admin_chat_templates"),
+                types.InlineKeyboardButton("🔔 Toggle Notifications", callback_data="settings_notifications")
+            )
+            markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_support_dashboard"))
+            try:
+                bot.edit_message_text(text, call_obj.message.chat.id, call_obj.message.message_id, reply_markup=markup, parse_mode="Markdown")
+            except Exception:
+                bot.send_message(call_obj.message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
+
+        if action == 'settings_auto_response':
+            bot.answer_callback_query(call.id, "Auto-responses are code-defined in code (edit AUTO_RESPONSES dict).", show_alert=True)
+            return _render_settings(call)
+        if action == 'settings_response_time':
+            if not hasattr(bot,'_user_states'): bot._user_states = {}
+            bot._user_states[call.from_user.id] = 'awaiting_auto_close_hours'
+            bot.answer_callback_query(call.id)
+            return bot.send_message(call.message.chat.id, f"Current auto-close hours: {settings['auto_close_hours']}\nSend new number (1-240):")
+        if action == 'settings_notifications':
+            settings['notify_all_admins'] = not settings.get('notify_all_admins', True)
+            save_support_settings(settings)
+            bot.answer_callback_query(call.id, f"notify_all_admins => {settings['notify_all_admins']}")
+            return _render_settings(call)
+        if action == 'settings_toggle_auto_assign':
+            settings['auto_assign'] = not settings.get('auto_assign', False)
+            save_support_settings(settings)
+            bot.answer_callback_query(call.id, f"auto_assign => {settings['auto_assign']}")
+            return _render_settings(call)
+        # Fallback
+        return _render_settings(call)
+
+    @bot.message_handler(func=lambda m: hasattr(bot,'_user_states') and bot._user_states.get(m.from_user.id)=='awaiting_auto_close_hours')
+    def handle_auto_close_hours(message):
+        settings = load_support_settings()
+        try:
+            hours = int(message.text.strip())
+            if hours < 1 or hours > 240:
+                raise ValueError
+            settings['auto_close_hours'] = hours
+            save_support_settings(settings)
+            bot.reply_to(message, f"✅ Updated auto-close hours to {hours}.")
+        except Exception:
+            bot.reply_to(message, "❌ Invalid number (1-240).")
+        bot._user_states.pop(message.from_user.id, None)
+        # Present updated snippet
+        bot.send_message(message.chat.id, "⚙️ Setting saved. Open Support Settings again from dashboard.")
+
+    # ----- Export Analytics (simple text) -----
+    @bot.callback_query_handler(func=lambda call: call.data == 'export_analytics')
+    def export_analytics(call):
+        stats = get_support_analytics()
+        text = (
+            "📤 *Support Analytics Export*\n\n"
+            f"Total Sessions (7d): {stats['total_sessions']}\n"
+            f"Active Sessions Now: {stats['active_sessions']}\n"
+            f"Avg Response Time: {stats['avg_response_time']}s\n"
+            f"Satisfaction: {stats['satisfaction_score']}/5\n"
+        )
+        if stats['top_categories']:
+            text += "Top Categories:\n" + "\n".join([f"- {SUPPORT_CATEGORIES.get(c,c)}: {cnt}" for c,cnt in stats['top_categories']])
+        bot.answer_callback_query(call.id, "Export generated")
+        bot.send_message(call.message.chat.id, text, parse_mode='Markdown')
+
 
 def notify_admins_new_chat(bot, session_id, user_id, category, username):
     """Notify all admins about new chat with enhanced info"""
@@ -961,6 +1467,74 @@ def notify_admins_new_ticket(bot, ticket_id, user_id, ticket_data, description):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
                              reply_markup=markup, parse_mode="Markdown")
 
+    # Admin chat view (from active chats list)
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_chat_"))
+    def admin_chat_view(call):
+        try:
+            session_id = int(call.data.split('_')[-1])
+        except Exception:
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id, admin_id, category, status, started_at FROM support_sessions WHERE session_id=?", (session_id,))
+            row = c.fetchone()
+        if not row:
+            bot.answer_callback_query(getattr(call,'id',None), "Session missing", show_alert=True)
+            return
+        user_id, admin_id, category, status, started_at = row
+        last_msgs = get_chat_history(session_id, 5)
+        transcript = ""
+        for m in reversed(last_msgs):
+            sender_id, sender_type, message_text, message_type, file_id, ts = m
+            who = 'U' if sender_type=='user' else 'A' if sender_type=='admin' else 'S'
+            snippet = (message_text or message_type or '')
+            if len(snippet) > 40:
+                snippet = snippet[:37] + '…'
+            transcript += f"{who}: {snippet}\n"
+        if not transcript:
+            transcript = "(no messages yet)"
+        category_name = SUPPORT_CATEGORIES.get(category, category)
+        text = (
+            f"💬 **Chat #{session_id}**\n"
+            f"User: `{user_id}` | Category: {category_name}\n"
+            f"Status: {status}\n"
+            f"Started: {started_at[:16] if started_at else '-'}\n\n"
+            f"Last messages:\n{transcript}"
+        )
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        if not admin_id:
+            markup.add(types.InlineKeyboardButton("👋 Join", callback_data=f"support_admin_join_{session_id}"))
+        markup.add(types.InlineKeyboardButton("📝 Templates", callback_data=f"tpl_menu_{session_id}"))
+        markup.add(types.InlineKeyboardButton("📜 History", callback_data=f"chat_history_{session_id}"))
+        markup.add(types.InlineKeyboardButton("ℹ️ Info", callback_data=f"chat_info_{session_id}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_active_chats"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        except Exception:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+
+    # /tpl command inside admin chat state
+    @bot.message_handler(commands=['tpl'])
+    def tpl_command(message):  # noqa: F811
+        try:
+            if not hasattr(bot, '_user_states'):
+                return
+            state = bot._user_states.get(message.from_user.id, '')
+            if not (isinstance(state, str) and state.startswith('support_chat_admin_')):
+                return
+            session_id = int(state.split('_')[-1])
+            templates_local = load_chat_templates()
+            if not templates_local:
+                bot.reply_to(message, "No templates defined.")
+                return
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            for idx, tpl in enumerate(templates_local, start=1):
+                label = (tpl[:20] + '…') if len(tpl) > 23 else tpl
+                markup.add(types.InlineKeyboardButton(f"{idx}. {label}", callback_data=f"tpl_send_{session_id}_{idx}"))
+            bot.reply_to(message, "Select a template:", reply_markup=markup)
+        except Exception as e:
+            print(f"/tpl command error: {e}")
+
     # Enhanced message handler with auto-responses and logging
     @bot.message_handler(func=lambda m: hasattr(bot, '_user_states') and isinstance(bot._user_states.get(m.from_user.id, ''), str) and bot._user_states.get(m.from_user.id, '').startswith("support_chat_user_"))
     def enhanced_user_chat_handler(message):
@@ -1060,6 +1634,10 @@ def notify_admins_new_ticket(bot, ticket_id, user_id, ticket_data, description):
                     bot.copy_message(user_id, from_chat_id=message.chat.id, message_id=message.message_id)
                 except:
                     pass
+
+        # If admin sent /tpl accidentally, ignore (handled by separate handler)
+        if message.text and message.text.strip().lower() == '/tpl':
+            return
 
 # Export the registration function
 __all__ = ['register_perfect_support_handlers']

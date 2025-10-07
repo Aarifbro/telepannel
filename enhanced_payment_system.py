@@ -245,7 +245,8 @@ def register_enhanced_payment_handlers(bot):
         admin_markup = types.InlineKeyboardMarkup(row_width=2)
         admin_markup.add(
             types.InlineKeyboardButton("✅ Quick Approve", callback_data=f"quick_approve_{payment_id}"),
-            types.InlineKeyboardButton("❌ Quick Reject", callback_data=f"quick_reject_enhanced_{payment_id}")
+            # Use a distinct prefix to avoid collision with legacy quick_reject_ handler in payment_handler.py
+            types.InlineKeyboardButton("❌ Quick Reject", callback_data=f"enhanced_quick_reject_{payment_id}")
         )
         admin_markup.add(
             types.InlineKeyboardButton("💬 Approve with Message", callback_data=f"approve_with_remarks_{payment_id}"),
@@ -328,7 +329,7 @@ def register_enhanced_payment_handlers(bot):
             return
         
         # Process approval with custom message
-        process_enhanced_approval(bot, message, payment_id, approval_message)
+        process_enhanced_approval(message, payment_id, approval_message)
         
         # Clear state
         del admin_remarks_states[message.from_user.id]
@@ -374,8 +375,12 @@ def register_enhanced_payment_handlers(bot):
             types.InlineKeyboardButton("⬅️ Back", callback_data=f"admin_payment_menu_{payment_id}")
         )
         
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode="HTML")
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=markup, parse_mode="HTML")
+        except Exception as e:
+            # If editing fails (e.g., not a text message), send a new message
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
     
     @bot.callback_query_handler(func=lambda call: call.data.startswith("reject_reason_"))
     def process_predefined_rejection(call):
@@ -390,7 +395,7 @@ def register_enhanced_payment_handlers(bot):
         reason = data_parts[3].replace('_', ' ') if len(data_parts) > 3 else "Invalid payment"
         
         # Process rejection
-        process_enhanced_rejection(bot, call, payment_id, reason)
+        process_enhanced_rejection(call, payment_id, reason)
     
     @bot.callback_query_handler(func=lambda call: call.data.startswith("custom_reject_reason_"))
     def custom_reject_reason_prompt(call):
@@ -416,8 +421,12 @@ def register_enhanced_payment_handlers(bot):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data=f"reject_with_remarks_{payment_id}"))
         
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=markup, parse_mode="HTML")
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=markup, parse_mode="HTML")
+        except Exception as e:
+            # If editing fails (e.g., not a text message), send a new message
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
     
     @bot.message_handler(func=lambda message: admin_remarks_states.get(message.from_user.id, "").startswith("rejection_remarks_"))
     def handle_rejection_remarks(message):
@@ -434,194 +443,198 @@ def register_enhanced_payment_handlers(bot):
             return
         
         # Process rejection
-        process_enhanced_rejection(bot, message, payment_id, rejection_reason)
+        process_enhanced_rejection(message, payment_id, rejection_reason)
         
         # Clear state
         del admin_remarks_states[message.from_user.id]
 
-def process_enhanced_approval(bot, context, payment_id, approval_message):
-    """Process enhanced payment approval with custom message"""
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            
-            # Get payment details
-            payment_data = cursor.execute('''
-                SELECT ep.user_id, ep.screenshot_file_id, o.item_name, o.item_details
-                FROM enhanced_payments ep
-                LEFT JOIN orders o ON ep.payment_id = o.order_id
-                WHERE ep.payment_id = ?
-            ''', (payment_id,)).fetchone()
-            
-            if not payment_data:
-                bot.reply_to(context, f"❌ Payment {payment_id} not found.")
-                return
-            
-            user_id, screenshot_file_id, item_name, item_details_str = payment_data
-            
-            # Update payment status
-            cursor.execute('''
-                UPDATE enhanced_payments 
-                SET status = 'approved', admin_response_remarks = ?, processed_by = ?, updated_at = ?
-                WHERE payment_id = ?
-            ''', (approval_message, context.from_user.id, datetime.now(UTC).isoformat(), payment_id))
-            
-            # Update order status
-            cursor.execute('''
-                UPDATE orders SET payment_status = 'COMPLETED' WHERE order_id = ?
-            ''', (payment_id,))
-            
-            # Log approval
-            cursor.execute('''
-                INSERT INTO payment_communications 
-                (payment_id, sender_type, sender_id, message_type, message_content, sent_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (payment_id, 'admin', context.from_user.id, 'approval', approval_message, datetime.now(UTC).isoformat()))
-            
-            conn.commit()
-        
-        # Send approval message to user
-        user_msg = (
-            f"🎉 <b>Payment Approved!</b>\n\n"
-            f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
-            f"✅ <b>Admin Message:</b>\n"
-            f"<i>{approval_message}</i>\n\n"
-            f"<b>What happens next:</b>\n"
-            f"• Your order is being processed immediately\n"
-            f"• You'll receive your item shortly\n"
-            f"• Order details will be delivered to you\n\n"
-            f"<b>Status:</b> ✅ Approved & Processing\n"
-            f"<b>Approved by:</b> Admin Team\n"
-            f"<b>Time:</b> {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-            f"Thank you for choosing our service! 🙏"
-        )
-        
-        send_random_animation(bot, user_id, kind="success", caption=user_msg, parse_mode="HTML")
-        
-        # Deliver the product if item details exist
-        if item_details_str:
-            try:
-                from payment_handler import deliver_product
-                item_details = json.loads(item_details_str)
-                deliver_product(bot, user_id, payment_id, item_details)
-            except Exception as e:
-                print(f"Error delivering product: {e}")
-        
-        # Confirm to admin
-        admin_confirmation = (
-            f"✅ <b>Payment Approved Successfully</b>\n\n"
-            f"<b>Payment ID:</b> <code>{payment_id}</code>\n"
-            f"<b>User ID:</b> <code>{user_id}</code>\n"
-            f"<b>Your Message:</b> {approval_message}\n\n"
-            f"The user has been notified and order is being processed."
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("💬 Chat with User", callback_data=f"admin_chat_user_{user_id}"))
-        
-        chat_id = context.chat.id if hasattr(context, 'chat') else context.message.chat.id
-        bot.send_message(chat_id, admin_confirmation, reply_markup=markup, parse_mode="HTML")
-        
-    except Exception as e:
-        print(f"Error approving payment: {e}")
-        error_msg = f"❌ Error approving payment: {str(e)}"
-        if hasattr(context, 'reply_to'):
-            bot.reply_to(context, error_msg)
-        else:
-            bot.answer_callback_query(context.id, "Error processing approval", show_alert=True)
 
-def process_enhanced_rejection(bot, context, payment_id, rejection_reason):
-    """Process enhanced payment rejection with detailed reason"""
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            
-            # Get payment details
-            payment_data = cursor.execute('''
-                SELECT user_id FROM enhanced_payments WHERE payment_id = ?
-            ''', (payment_id,)).fetchone()
-            
-            if not payment_data:
-                if hasattr(context, 'reply_to'):
+
+    # --- HELPER FUNCTIONS ---
+    
+    def process_enhanced_approval(context, payment_id, approval_message):
+        """Process enhanced payment approval with custom message"""
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                cursor = conn.cursor()
+                
+                # Get payment details
+                payment_data = cursor.execute('''
+                    SELECT ep.user_id, ep.screenshot_file_id, o.item_name, o.item_details
+                    FROM enhanced_payments ep
+                    LEFT JOIN orders o ON ep.payment_id = o.order_id
+                    WHERE ep.payment_id = ?
+                ''', (payment_id,)).fetchone()
+                
+                if not payment_data:
                     bot.reply_to(context, f"❌ Payment {payment_id} not found.")
-                else:
-                    bot.answer_callback_query(context.id, "Payment not found", show_alert=True)
-                return
+                    return
+                
+                user_id, screenshot_file_id, item_name, item_details_str = payment_data
+                
+                # Update payment status
+                cursor.execute('''
+                    UPDATE enhanced_payments 
+                    SET status = 'approved', admin_response_remarks = ?, processed_by = ?, updated_at = ?
+                    WHERE payment_id = ?
+                ''', (approval_message, context.from_user.id, datetime.now(UTC).isoformat(), payment_id))
+                
+                # Update order status
+                cursor.execute('''
+                    UPDATE orders SET payment_status = 'COMPLETED' WHERE order_id = ?
+                ''', (payment_id,))
+                
+                # Log approval
+                cursor.execute('''
+                    INSERT INTO payment_communications 
+                    (payment_id, sender_type, sender_id, message_type, message_content, sent_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (payment_id, 'admin', context.from_user.id, 'approval', approval_message, datetime.now(UTC).isoformat()))
+                
+                conn.commit()
             
-            user_id = payment_data[0]
-            admin_id = context.from_user.id if hasattr(context, 'from_user') else ADMIN_ID
+            # Send approval message to user
+            user_msg = (
+                f"🎉 <b>Payment Approved!</b>\n\n"
+                f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
+                f"✅ <b>Admin Message:</b>\n"
+                f"<i>{approval_message}</i>\n\n"
+                f"<b>What happens next:</b>\n"
+                f"• Your order is being processed immediately\n"
+                f"• You'll receive your item shortly\n"
+                f"• Order details will be delivered to you\n\n"
+                f"<b>Status:</b> ✅ Approved & Processing\n"
+                f"<b>Approved by:</b> Admin Team\n"
+                f"<b>Time:</b> {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+                f"Thank you for choosing our service! 🙏"
+            )
             
-            # Update payment status
-            cursor.execute('''
-                UPDATE enhanced_payments 
-                SET status = 'rejected', admin_response_remarks = ?, processed_by = ?, updated_at = ?
-                WHERE payment_id = ?
-            ''', (rejection_reason, admin_id, datetime.now(UTC).isoformat(), payment_id))
+            send_random_animation(bot, user_id, kind="success", caption=user_msg, parse_mode="HTML")
             
-            # Update order status
-            cursor.execute('''
-                UPDATE orders SET payment_status = 'REJECTED' WHERE order_id = ?
-            ''', (payment_id,))
+            # Deliver the product if item details exist
+            if item_details_str:
+                try:
+                    from payment_handler import deliver_product
+                    item_details = json.loads(item_details_str)
+                    deliver_product(bot, user_id, payment_id, item_details)
+                except Exception as e:
+                    print(f"Error delivering product: {e}")
             
-            # Log rejection
-            cursor.execute('''
-                INSERT INTO payment_communications 
-                (payment_id, sender_type, sender_id, message_type, message_content, sent_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (payment_id, 'admin', admin_id, 'rejection', rejection_reason, datetime.now(UTC).isoformat()))
+            # Confirm to admin
+            admin_confirmation = (
+                f"✅ <b>Payment Approved Successfully</b>\n\n"
+                f"<b>Payment ID:</b> <code>{payment_id}</code>\n"
+                f"<b>User ID:</b> <code>{user_id}</code>\n"
+                f"<b>Your Message:</b> {approval_message}\n\n"
+                f"The user has been notified and order is being processed."
+            )
             
-            conn.commit()
-        
-        # Send detailed rejection message to user
-        user_msg = (
-            f"❌ <b>Payment Verification Failed</b>\n\n"
-            f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
-            f"📋 <b>Reason for Rejection:</b>\n"
-            f"{rejection_reason}\n\n"
-            f"🔄 <b>What you can do:</b>\n"
-            f"• Review the reason above carefully\n"
-            f"• Take a new, clearer screenshot if needed\n"
-            f"• Ensure all payment details are visible\n"
-            f"• Include the Payment ID in transaction memo\n"
-            f"• Try submitting again with correct information\n\n"
-            f"💬 <b>Need Help?</b>\n"
-            f"Contact our support team for assistance.\n\n"
-            f"<b>Reviewed by:</b> Admin Team\n"
-            f"<b>Time:</b> {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("🔄 Try Again", callback_data=f"enhanced_pay_{payment_id}"),
-            types.InlineKeyboardButton("💬 Contact Support", callback_data="support_menu"),
-            types.InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")
-        )
-        
-        send_random_animation(bot, user_id, kind="reject", caption=user_msg, parse_mode="HTML")
-        bot.send_message(user_id, "Choose an option:", reply_markup=markup)
-        
-        # Confirm to admin
-        admin_confirmation = (
-            f"❌ <b>Payment Rejected Successfully</b>\n\n"
-            f"<b>Payment ID:</b> <code>{payment_id}</code>\n"
-            f"<b>User ID:</b> <code>{user_id}</code>\n"
-            f"<b>Rejection Reason:</b> {rejection_reason}\n\n"
-            f"The user has been notified with detailed feedback."
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("💬 Chat with User", callback_data=f"admin_chat_user_{user_id}"))
-        
-        chat_id = context.chat.id if hasattr(context, 'chat') else context.message.chat.id
-        bot.send_message(chat_id, admin_confirmation, reply_markup=markup, parse_mode="HTML")
-        
-    except Exception as e:
-        print(f"Error rejecting payment: {e}")
-        error_msg = f"❌ Error rejecting payment: {str(e)}"
-        if hasattr(context, 'reply_to'):
-            bot.reply_to(context, error_msg)
-        else:
-            bot.answer_callback_query(context.id, "Error processing rejection", show_alert=True)
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("💬 Chat with User", callback_data=f"admin_chat_user_{user_id}"))
+            
+            chat_id = context.chat.id if hasattr(context, 'chat') else context.message.chat.id
+            bot.send_message(chat_id, admin_confirmation, reply_markup=markup, parse_mode="HTML")
+            
+        except Exception as e:
+            print(f"Error approving payment: {e}")
+            error_msg = f"❌ Error approving payment: {str(e)}"
+            if hasattr(context, 'reply_to'):
+                bot.reply_to(context, error_msg)
+            else:
+                bot.answer_callback_query(context.id, "Error processing approval", show_alert=True)
+
+    def process_enhanced_rejection(context, payment_id, rejection_reason):
+        """Process enhanced payment rejection with detailed reason"""
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                cursor = conn.cursor()
+                
+                # Get payment details
+                payment_data = cursor.execute('''
+                    SELECT user_id FROM enhanced_payments WHERE payment_id = ?
+                ''', (payment_id,)).fetchone()
+                
+                if not payment_data:
+                    if hasattr(context, 'reply_to'):
+                        bot.reply_to(context, f"❌ Payment {payment_id} not found.")
+                    else:
+                        bot.answer_callback_query(context.id, "Payment not found", show_alert=True)
+                    return
+                
+                user_id = payment_data[0]
+                admin_id = context.from_user.id if hasattr(context, 'from_user') else ADMIN_ID
+                
+                # Update payment status
+                cursor.execute('''
+                    UPDATE enhanced_payments 
+                    SET status = 'rejected', admin_response_remarks = ?, processed_by = ?, updated_at = ?
+                    WHERE payment_id = ?
+                ''', (rejection_reason, admin_id, datetime.now(UTC).isoformat(), payment_id))
+                
+                # Update order status
+                cursor.execute('''
+                    UPDATE orders SET payment_status = 'REJECTED' WHERE order_id = ?
+                ''', (payment_id,))
+                
+                # Log rejection
+                cursor.execute('''
+                    INSERT INTO payment_communications 
+                    (payment_id, sender_type, sender_id, message_type, message_content, sent_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (payment_id, 'admin', admin_id, 'rejection', rejection_reason, datetime.now(UTC).isoformat()))
+                
+                conn.commit()
+            
+            # Send detailed rejection message to user
+            user_msg = (
+                f"❌ <b>Payment Verification Failed</b>\n\n"
+                f"<b>Payment ID:</b> <code>{payment_id}</code>\n\n"
+                f"📋 <b>Reason for Rejection:</b>\n"
+                f"{rejection_reason}\n\n"
+                f"🔄 <b>What you can do:</b>\n"
+                f"• Review the reason above carefully\n"
+                f"• Take a new, clearer screenshot if needed\n"
+                f"• Ensure all payment details are visible\n"
+                f"• Include the Payment ID in transaction memo\n"
+                f"• Try submitting again with correct information\n\n"
+                f"💬 <b>Need Help?</b>\n"
+                f"Contact our support team for assistance.\n\n"
+                f"<b>Reviewed by:</b> Admin Team\n"
+                f"<b>Time:</b> {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"
+            )
+            
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                types.InlineKeyboardButton("🔄 Try Again", callback_data=f"enhanced_pay_{payment_id}"),
+                types.InlineKeyboardButton("💬 Contact Support", callback_data="support_menu"),
+                types.InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")
+            )
+            
+            send_random_animation(bot, user_id, kind="reject", caption=user_msg, parse_mode="HTML")
+            bot.send_message(user_id, "Choose an option:", reply_markup=markup)
+            
+            # Confirm to admin
+            admin_confirmation = (
+                f"❌ <b>Payment Rejected Successfully</b>\n\n"
+                f"<b>Payment ID:</b> <code>{payment_id}</code>\n"
+                f"<b>User ID:</b> <code>{user_id}</code>\n"
+                f"<b>Rejection Reason:</b> {rejection_reason}\n\n"
+                f"The user has been notified with detailed feedback."
+            )
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("💬 Chat with User", callback_data=f"admin_chat_user_{user_id}"))
+            
+            chat_id = context.chat.id if hasattr(context, 'chat') else context.message.chat.id
+            bot.send_message(chat_id, admin_confirmation, reply_markup=markup, parse_mode="HTML")
+            
+        except Exception as e:
+            print(f"Error rejecting payment: {e}")
+            error_msg = f"❌ Error rejecting payment: {str(e)}"
+            if hasattr(context, 'reply_to'):
+                bot.reply_to(context, error_msg)
+            else:
+                bot.answer_callback_query(context.id, "Error processing rejection", show_alert=True)
 
     # --- QUICK ACTIONS ---
     
@@ -635,19 +648,29 @@ def process_enhanced_rejection(bot, context, payment_id, rejection_reason):
         payment_id = call.data.replace("quick_approve_", "")
         default_message = "✅ Payment verified and approved! Thank you for your trust. Your order is being processed."
         
-        process_enhanced_approval(bot, call, payment_id, default_message)
+        process_enhanced_approval(call, payment_id, default_message)
     
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("quick_reject_enhanced_"))
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("enhanced_quick_reject_"))
     def quick_reject_payment(call):
         """Quick rejection with default message"""
         if call.from_user.id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
             return
-            
-        payment_id = call.data.replace("quick_reject_enhanced_", "")
+        
+        payment_id = call.data.replace("enhanced_quick_reject_", "")
         default_reason = "Screenshot unclear or payment details cannot be verified. Please upload a clearer screenshot."
         
-        process_enhanced_rejection(bot, call, payment_id, default_reason)
+        process_enhanced_rejection(call, payment_id, default_reason)
+
+    # Backward compatibility: old messages used quick_reject_enhanced_{payment_id}
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("quick_reject_enhanced_"))
+    def quick_reject_payment_legacy_prefix(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
+            return
+        payment_id = call.data.replace("quick_reject_enhanced_", "")
+        default_reason = "Screenshot unclear or payment details cannot be verified. Please upload a clearer screenshot."
+        process_enhanced_rejection(call, payment_id, default_reason)
     
     @bot.callback_query_handler(func=lambda call: call.data.startswith("payment_help_"))
     def payment_help_menu(call):

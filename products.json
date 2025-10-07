@@ -1,66 +1,4 @@
 {
-    "bins": [
-        {
-            "name": "Netflix BIN",
-            "price": 10,
-            "bin": "4567890000000000",
-            "status": "WORKING",
-            "country": "USA",
-            "info": "VISA Credit Traditional",
-            "bank": "CHASE BANK",
-            "description": "For Netflix, Spotify, etc."
-        },
-        {
-            "name": "Prime Video BIN",
-            "price": 12,
-            "bin": "5123450000000000",
-            "status": "WORKING",
-            "country": "UK",
-            "info": "MasterCard Debit",
-            "bank": "BARCLAYS BANK PLC",
-            "description": "For Amazon Prime Video."
-        },
-        {
-            "name": "swiggy",
-            "price": 20,
-            "description": "$20 Netflix US Gift Card."
-        },
-        {
-            "name": "eneba.com",
-            "price": 25,
-            "description": "eneba Gift Card Bin."
-        },
-        {
-            "name": "chodu BIN",
-            "price": 10,
-            "description": "For Netflix, Spotify, etc.",
-            "bin": "4567890000000000",
-            "status": "WORKING",
-            "country": "USA",
-            "info": "VISA Credit Traditional",
-            "bank": "CHASE BANK"
-        },
-        {
-            "name": "tataa",
-            "price": 10,
-            "description": "For Netflix, Spotify, etc.",
-            "bin": "4567890000000000",
-            "status": "WORKING",
-            "country": "USA",
-            "info": "VISA Credit Traditional",
-            "bank": "CHASE BANK"
-        },
-        {
-            "name": "Netflix BIN",
-            "price": 10,
-            "description": "For Netflix, Spotify, etc.",
-            "bin": "4567890000000000",
-            "status": "WORKING",
-            "country": "USA",
-            "info": "VISA Credit Traditional",
-            "bank": "CHASE BANK"
-        }
-    ],
     "ready_ccs": [
         {
             "name": "CC for Playstore",
@@ -90,31 +28,6 @@
             "name": "Basic RDP (1 Month)",
             "price": 15,
             "description": "Standard RDP for basic tasks."
-        }
-    ],
-    "methods": [
-        {
-            "name": "PayPal Method",
-            "price": 40,
-            "description": "Latest PayPal cashing out method."
-        },
-        {
-            "name": "Netflix BIN",
-            "price": 10,
-            "description": "For Netflix, Spotify, etc.",
-            "bin": "4567890000000000",
-            "status": "WORKING",
-            "country": "USA",
-            "info": "VISA Credit Traditional",
-            "bank": "CHASE BANK"
-        },
-        {
-            "name": "Tg premium",
-            "price": 10,
-            "description": "Tate ki gand",
-            "delivery_type": "tg_photo",
-            "delivery_content": "AgACAgUAAxkBAAIDOmjb_HzNxKFvsZspNVIMIWkw4lpbAAJEyTEb_IbhVr3dcR4hq-CbAQADAgADeQADNgQ",
-            "quantity": 1
         }
     ],
     "other": [
@@ -147,5 +60,6 @@
             "price": 100,
             "description": "Advanced bank phishing kit, multi-factor bypass, real-time logs, mobile ready."
         }
-    ]
+    ],
+    "method_bins": []
 }

@@ -214,26 +214,20 @@ def safe_edit_message(bot, chat_id, message_id, text, reply_markup=None, parse_m
             return False
 
 def send_main_menu(bot, chat_id, text, message_id=None):
-    """
-    Sends the main menu keyboard to the user with fresh modern design.
-    Can either edit an existing message or send a new one.
-    """
-    # Load current section statuses
+    """Sends the main menu using DB-backed section statuses (admin_meta_db)."""
+    # Lazy-import admin_meta_db to avoid circular imports
     try:
-        with open('section_status.json', 'r') as f:
-            section_statuses = json.load(f)
-    except FileNotFoundError:
-        # Default statuses if file doesn't exist
-        section_statuses = {
-            "cc_shop": "available",
-            "bins_methods": "available", 
-            "gift_cards": "coming_soon",
-            "hacks": "coming_soon",
-            "dumps": "available",
-            "rdp": "coming_soon",
-            "support": "available",
-            "ai_search": "available"
-        }
+        from admin_meta_db import get_section_status
+    except Exception:
+        # Fallback: assume all available if DB not ready
+        def get_section_status(key):
+            return 'available'
+
+    # Canonical section keys we present in menu (bundle uses bins_methods for gating)
+    section_keys = [
+        'cc_shop', 'bins_methods', 'gift_cards', 'hacks', 'dumps', 'rdp', 'support', 'ai_search'
+    ]
+    section_statuses = {k: get_section_status(k) for k in section_keys}
     
     # Status icon mapping
     status_icons = {
@@ -269,7 +263,7 @@ def send_main_menu(bot, chat_id, text, message_id=None):
     # 🎯 MAIN STORE SECTIONS 🎯
     markup.add(
         types.InlineKeyboardButton(get_button_text("🛍️ CC Shop", "cc_shop"), callback_data="cc_menu"),
-        types.InlineKeyboardButton(get_button_text("💎 BINs • Methods", "bins_methods"), callback_data="bins_methods_menu")
+        types.InlineKeyboardButton(get_button_text("💎 BINs • Methods", "bins_methods"), callback_data="method_bins_menu")
     )
 
     markup.add(
@@ -289,7 +283,7 @@ def send_main_menu(bot, chat_id, text, message_id=None):
     )
 
     markup.add(
-        types.InlineKeyboardButton("📊 User Dashboard", callback_data="user_dashboard"),
+        types.InlineKeyboardButton(get_button_text("🧠 AI Search", "ai_search"), callback_data="ai_search"),
         types.InlineKeyboardButton("💰 Add Funds", callback_data="add_funds")
     )
 
@@ -300,11 +294,12 @@ def send_main_menu(bot, chat_id, text, message_id=None):
         )
 
     # 🎯 ADMIN SECTION 🎯
-    if is_owner or is_admin or has_section_admin:
-        markup.add(types.InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin_panel"))
-    
     if is_owner:
+        # Owners get Owner Panel only (no duplicate Admin Panel)
         markup.add(types.InlineKeyboardButton("👑 Owner Panel", callback_data="owner_panel"))
+    elif is_admin or has_section_admin:
+        # Regular admins get Admin Panel
+        markup.add(types.InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin_panel"))
 
     # Send or edit the message
     try:

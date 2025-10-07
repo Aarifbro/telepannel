@@ -24,22 +24,46 @@ def safe_edit_message(bot, chat_id, message_id, text, reply_markup=None, parse_m
 # A dictionary to map internal category keys to their user-friendly, display-ready names.
 # This makes it easy to change how categories are presented to the user without changing the code logic.
 CATEGORY_NAMES = {
-    "bins": "BINs",
-    "ready_ccs": "Ready CCs",
-    "gift_cards": "Gift Cards",
-    "rdp": "RDPs",
-    "methods": "Methods",
-    "method_bins": "BINs + Methods",
-    "other": "Other Items",
-    "dumps": "Dumps",
-    "hacks": "Hacks",
-    "phishing_kits": "Phishing Kits"
+    "cc_shop": "🛍️ CC Shop",
+    "custom_ccs": "🎛️ Custom CC",
+    "ready_ccs": "💳 Ready CC",
+    # Unified bundle category replacing legacy bins/methods variations
+    "method_bins": "💎 BIN+Method Bundle",
+    "gift_cards": "🎁 Gift Cards",
+    "hacks": "🔧 Hacks",
+    "dumps": "💾 Dumps",
+    "rdp": "🖥️ RDPs",
+    "other": "📦 Other Items"
 }
 
 # Categories where media/link-based items are NOT allowed via admin add; only JSON text is accepted
-RESTRICTED_MEDIA_CATEGORIES = {"bins", "ready_ccs", "gift_cards"}
+RESTRICTED_MEDIA_CATEGORIES = {"custom_ccs", "ready_ccs", "gift_cards"}
 
 def register_other_handlers(bot, user_states, get_products_from_cache, save_products_to_file_and_reload):
+    # --- One-time legacy merge: bins/methods/bin_methods/bins_methods -> method_bins ---
+    try:
+        data = load_products()
+        changed = False
+        bundle_list = data.get("method_bins", [])
+        legacy_keys = ["bins", "methods", "bin_methods", "bins_methods"]
+        for lk in legacy_keys:
+            if lk in data and lk != "method_bins" and data[lk]:
+                existing_ids = {item.get('id') for item in bundle_list if isinstance(item, dict)}
+                next_id = (max(existing_ids) + 1) if existing_ids else 1
+                for item in data[lk]:
+                    if isinstance(item, dict):
+                        it = dict(item)
+                        it['id'] = next_id; next_id += 1
+                        bundle_list.append(it)
+                del data[lk]
+                changed = True
+        if changed:
+            data['method_bins'] = bundle_list
+            save_products(data)
+            save_products_to_file_and_reload(data)
+            print("[migration] Merged legacy bins/methods categories into method_bins")
+    except Exception as e:
+        print(f"Legacy merge failed: {e}")
     # --- Generic Buy Handler for Dynamic Menus ---
     @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_idx_"))
     def buy_item_callback(call):
@@ -71,6 +95,11 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
                 "other": "other_menu",
                 "method_bins": "method_bins_menu",
                 "bins": "bins_methods_menu",
+                "custom_ccs": "custom_cc_menu",
+                "ready_ccs": "cc_ready_menu",
+                "gift_cards": "giftcards_menu",
+                "dumps": "dumps_menu",
+                "hacks": "hacks_menu",
             }
             back_menu_callback = back_map.get(category_key, "main_menu")
             
@@ -88,19 +117,35 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
         if call.from_user.id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Only the owner can access this panel.", show_alert=True)
             return
-        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        
+        # Owner-exclusive admin management
         markup.add(
-            types.InlineKeyboardButton("💬 User Chat", callback_data="owner_user_chat"),
             types.InlineKeyboardButton("➕ Add Global Admin", callback_data="owner_add_admin"),
-            types.InlineKeyboardButton("➖ Remove Global Admin", callback_data="owner_remove_admin"),
-            types.InlineKeyboardButton("👥 List Global Admins", callback_data="owner_list_admins"),
-            types.InlineKeyboardButton("➕ Add Section Admin", callback_data="owner_add_section_admin"),
-            types.InlineKeyboardButton("➖ Remove Section Admin", callback_data="owner_remove_section_admin"),
-            types.InlineKeyboardButton("👥 List Section Admins", callback_data="owner_list_section_admins"),
-            types.InlineKeyboardButton("🎛️ Button Status Manager", callback_data="status_manager"),
-            types.InlineKeyboardButton(" Bot Stats", callback_data="owner_bot_stats"),
-            types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu")
+            types.InlineKeyboardButton("➖ Remove Global Admin", callback_data="owner_remove_admin")
         )
+        markup.add(
+            types.InlineKeyboardButton("👥 List Global Admins", callback_data="owner_list_admins"),
+            types.InlineKeyboardButton("� User Chat", callback_data="owner_user_chat")
+        )
+        
+        # Section admin management
+        markup.add(
+            types.InlineKeyboardButton("➕ Add Section Admin", callback_data="owner_add_section_admin"),
+            types.InlineKeyboardButton("➖ Remove Section Admin", callback_data="owner_remove_section_admin")
+        )
+        markup.add(
+            types.InlineKeyboardButton("👥 List Section Admins", callback_data="owner_list_section_admins"),
+            types.InlineKeyboardButton("🎛️ Button Status Manager", callback_data="status_manager")
+        )
+        
+        # Quick access to admin tools & stats
+        markup.add(
+            types.InlineKeyboardButton("⚙️ Admin Tools", callback_data="admin_panel"),
+            types.InlineKeyboardButton("📊 Bot Stats", callback_data="owner_bot_stats")
+        )
+        
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         bot.edit_message_text("👑 <b>Owner Panel</b>\n\nManage global and section-based admins. Section admins can only manage their assigned section (e.g., Hacks).", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     # Section Admin Management
@@ -286,7 +331,7 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
             for r in rows:
                 text += f"<code>{r[0]}</code> | added: <code>{(r[1] or '')[:19]}</code>\n"
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="owner_panel"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Owner Panel", callback_data="owner_panel"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
     """
     Registers all callback handlers for the non-CC/BIN sections of the bot.
@@ -329,6 +374,293 @@ def register_other_handlers(bot, user_states, get_products_from_cache, save_prod
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         text = f"🎁 **{title}**\n\nPlease select a product to purchase from the list below."
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    def get_category_markup(category):
+        """Generates the markup for a specific category management menu."""
+        products = load_products()
+        items = products.get(category, [])
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        # Use the new wizard for adding items
+        markup.add(types.InlineKeyboardButton(f"➕ Add Item", callback_data=f"start_wizard_{category}"))
+
+        # List items for deletion
+        if items:
+            # Add a button to clear all items in the category
+            markup.add(types.InlineKeyboardButton(f"🗑️ Clear All Items in {CATEGORY_NAMES.get(category, category)}", callback_data=f"clear_cat_{category}"))
+
+            for item in items[:20]:  # Show max 20 items for deletion
+                item_id = item.get('id', 'N/A')
+
+                # Create a representative name for the item
+                if category in ['custom_ccs', 'ready_ccs']:
+                    item_name = f"CC #{item_id} ({item.get('bin', '...')}...)"
+                elif category == 'gift_cards':
+                    item_name = item.get('name', f'Card #{item_id}')
+                elif category in ('bin_methods', 'method_bins'):
+                    item_name = item.get('name') or f"Bundle #{item_id}"
+                else:
+                    item_name = item.get('name', f'Item #{item_id}')
+
+                raw_price = item.get('price', 'N/A')
+                if isinstance(raw_price, (int, float)):
+                    price_str = f"{int(raw_price)}" if raw_price == int(raw_price) else f"{raw_price:.2f}"
+                else:
+                    price_str = str(raw_price)
+                display_text = f"❌ {item_name} - ${price_str}"
+
+                markup.add(types.InlineKeyboardButton(display_text, callback_data=f"delete_item_{category}_{item_id}"))
+
+        # Navigation
+        if category in ["custom_ccs", "ready_ccs"]:
+            markup.add(types.InlineKeyboardButton("⬅️ Back to CC Shop", callback_data="admin_cc_shop_menu"))
+        else:
+            markup.add(types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu"))
+            
+        return markup
+
+    # =============================
+    # ===== Product Add Wizard ====
+    # =============================
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("start_wizard_"))
+    def start_wizard(call):
+        category = call.data.replace("start_wizard_", "")
+        # Basic permission: only owner or global admin (section admins cannot add products globally here)
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor(); c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if not c.fetchone():
+                    bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+                    return
+        user_states[call.from_user.id] = f"wizard_name_{category}"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
+        bot.edit_message_text(
+            f"🧪 <b>Add New Item</b>\n\nCategory: <code>{CATEGORY_NAMES.get(category, category)}</code>\n\nSend the <b>name/title</b> of the new item.",
+            call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML"
+        )
+
+    @bot.message_handler(func=lambda m: isinstance(user_states.get(m.from_user.id, ''), str) and user_states.get(m.from_user.id, '').startswith("wizard_name_"))
+    def wizard_get_name(message):
+        state = user_states.get(message.from_user.id)
+        category = state.replace("wizard_name_", "")
+        name = message.text.strip()
+        user_states[message.from_user.id] = f"wizard_price_{category}::{name}"
+        bot.send_message(message.chat.id, f"💲 Great. Now send the <b>price</b> in USD for <code>{name}</code> (numbers only).", parse_mode="HTML")
+
+    @bot.message_handler(func=lambda m: isinstance(user_states.get(m.from_user.id, ''), str) and user_states.get(m.from_user.id, '').startswith("wizard_price_"))
+    def wizard_get_price(message):
+        state = user_states.get(message.from_user.id)
+        try:
+            header, rest = state.split("_", 1)  # wizard + remaining
+            # state format: wizard_price_{category}::{name}
+            meta = rest.replace("price_", "")
+            category, name = meta.split("::", 1)
+        except Exception:
+            bot.send_message(message.chat.id, "State error. Restart wizard.")
+            user_states.pop(message.from_user.id, None)
+            return
+        try:
+            price = float(message.text.strip())
+            if price < 0:
+                raise ValueError
+        except Exception:
+            bot.reply_to(message, "❌ Invalid price. Send a positive number (e.g., 25 or 19.99).")
+            return
+        user_states[message.from_user.id] = f"wizard_desc_{category}::{name}::{price}"
+        bot.send_message(message.chat.id, "📝 Optional: Send a description (or type '-' to skip).")
+
+    @bot.message_handler(func=lambda m: isinstance(user_states.get(m.from_user.id, ''), str) and user_states.get(m.from_user.id, '').startswith("wizard_desc_"))
+    def wizard_get_desc(message):
+        state = user_states.get(message.from_user.id)
+        try:
+            _, rest = state.split("_", 1)
+            meta = rest.replace("desc_", "")
+            category, name, price = meta.split("::", 2)
+            price = float(price)
+        except Exception:
+            bot.send_message(message.chat.id, "State error. Aborting.")
+            user_states.pop(message.from_user.id, None)
+            return
+        desc = None if message.text.strip() == '-' else message.text.strip()
+        # Persist item
+        try:
+            data = load_products()
+            items = data.get(category, [])
+            # Generate next id
+            next_id = (max([it.get('id', 0) for it in items]) + 1) if items else 1
+            new_item = {"id": next_id, "name": name, "price": price}
+            if desc:
+                new_item["description"] = desc
+            items.append(new_item)
+            data[category] = items
+            save_products(data)
+            save_products_to_file_and_reload(data)
+            if category == 'method_bins':
+                user_states[message.from_user.id] = f"wizard_file_method_bins::{category}::{next_id}"
+                bot.send_message(message.chat.id, f"✅ Added <b>{name}</b> (ID {next_id}).\n\n📎 Now send a document to attach (delivered to buyers) or type <code>skip</code> to finish.", parse_mode="HTML")
+            else:
+                bot.send_message(message.chat.id, f"✅ Added <b>{name}</b> (ID {next_id}) to <code>{CATEGORY_NAMES.get(category, category)}</code>.", parse_mode="HTML")
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Failed to save item: {e}")
+        finally:
+            if not user_states.get(message.from_user.id, '').startswith('wizard_file_method_bins::'):
+                user_states.pop(message.from_user.id, None)
+                try:
+                    markup = get_category_markup(category)
+                    bot.send_message(message.chat.id, f"📦 <b>{CATEGORY_NAMES.get(category, 'Category')}</b> updated.", parse_mode="HTML", reply_markup=markup)
+                except Exception:
+                    pass
+
+    # Optional file attachment handler (document) for method_bins items
+    @bot.message_handler(content_types=['document'], func=lambda m: isinstance(user_states.get(m.from_user.id,''), str) and user_states.get(m.from_user.id,'').startswith('wizard_file_method_bins::'))
+    def wizard_method_bins_file(message):
+        state = user_states.get(message.from_user.id)
+        try:
+            _, category, item_id = state.split('::', 2)
+            item_id = int(item_id)
+        except Exception:
+            bot.reply_to(message, 'State error (file). Aborting.')
+            user_states.pop(message.from_user.id, None)
+            return
+        file_id = message.document.file_id if message.document else None
+        if not file_id:
+            bot.reply_to(message, 'No document detected. Send a file or type skip.')
+            return
+        try:
+            data = load_products(); items = data.get(category, [])
+            for it in items:
+                if it.get('id') == item_id:
+                    it['delivery_type'] = 'tg_document'
+                    it['delivery_content'] = file_id
+                    break
+            data[category] = items
+            save_products(data); save_products_to_file_and_reload(data)
+            bot.reply_to(message, '📎 File attached and item updated.')
+        except Exception as e:
+            bot.reply_to(message, f'Failed to attach file: {e}')
+        finally:
+            user_states.pop(message.from_user.id, None)
+            try:
+                markup = get_category_markup(category)
+                bot.send_message(message.chat.id, f"📦 <b>{CATEGORY_NAMES.get(category, 'Category')}</b> updated.", parse_mode="HTML", reply_markup=markup)
+            except Exception:
+                pass
+
+    @bot.message_handler(func=lambda m: isinstance(user_states.get(m.from_user.id,''), str) and user_states.get(m.from_user.id,'').startswith('wizard_file_method_bins::'))
+    def wizard_method_bins_file_skip(message):
+        if message.text and message.text.lower().strip() == 'skip':
+            state = user_states.get(message.from_user.id)
+            try:
+                _, category, _ = state.split('::', 2)
+            except Exception:
+                category = 'method_bins'
+            bot.reply_to(message, '✅ Finished without attaching file.')
+            user_states.pop(message.from_user.id, None)
+            try:
+                markup = get_category_markup(category)
+                bot.send_message(message.chat.id, f"📦 <b>{CATEGORY_NAMES.get(category, 'Category')}</b> updated.", parse_mode="HTML", reply_markup=markup)
+            except Exception:
+                pass
+        else:
+            bot.reply_to(message, 'Send a document to attach or type skip.')
+
+    # =============================
+    # ===== Delete / Clear Items ===
+    # =============================
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("delete_item_"))
+    def delete_item(call):
+        try:
+            _, category, item_id = call.data.split('_', 2)
+            item_id = int(item_id)
+        except Exception:
+            bot.answer_callback_query(call.id, "Bad format", show_alert=True)
+            return
+        # Permission check
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor(); c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if not c.fetchone():
+                    bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+                    return
+        try:
+            data = load_products()
+            items = data.get(category, [])
+            before = len(items)
+            items = [it for it in items if it.get('id') != item_id]
+            data[category] = items
+            if len(items) == before:
+                bot.answer_callback_query(call.id, "Not found", show_alert=True)
+                return
+            save_products(data)
+            save_products_to_file_and_reload(data)
+            bot.answer_callback_query(call.id, "Deleted", show_alert=False)
+            # Refresh menu
+            refresh_markup = get_category_markup(category)
+            try:
+                bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=refresh_markup)
+            except Exception:
+                pass
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Err: {e}", show_alert=True)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("clear_cat_"))
+    def clear_category(call):
+        category = call.data.replace("clear_cat_", "")
+        if call.from_user.id != ADMIN_ID:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor(); c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
+                if not c.fetchone():
+                    bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+                    return
+        try:
+            data = load_products(); items = data.get(category, [])
+            if not items:
+                bot.answer_callback_query(call.id, "Already empty", show_alert=True)
+                return
+            data[category] = []
+            save_products(data)
+            save_products_to_file_and_reload(data)
+            bot.answer_callback_query(call.id, "Cleared", show_alert=False)
+            markup = get_category_markup(category)
+            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=markup)
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Err: {e}", show_alert=True)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_cat_menu_"))
+    def admin_cat_menu_callback(call):
+        """
+        Generic handler for category management menus.
+        
+        This function is triggered when the admin selects a category to manage products, 
+        users, or other resources. It shows the current items in the category and provides
+        options to add new items (via wizard or JSON), clear the category, or delete items.
+        """
+        try:
+            category = call.data.replace("admin_cat_menu_", "")  # Extract category from callback data
+            products = load_products()
+            items = products.get(category, [])
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Error: {str(e)}", show_alert=True)
+            return
+
+        text = f"📦 <b>{CATEGORY_NAMES.get(category, 'Category')} Management</b>\n\n"
+        markup = get_category_markup(category)
+
+        # Show current items in the category
+        if items:
+            text += "🛠️ <b>Current Items:</b>\n"
+            for item in items[:10]:  # Show up to 10 items
+                item_name = item.get("name", "Unnamed Item")
+                item_price = item.get("price", "N/A")
+                text += f"• {item_name} - ${item_price}\n"
+            if len(items) > 10:
+                text += "<i>...and more items</i>\n"
+        else:
+            text += "No items found in this category.\n"
+
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     # ======================================
     # ====== USER-FACING MENU HANDLERS ======
@@ -538,10 +870,6 @@ Share this unique link with your friends. Every time someone starts the bot usin
             return
         create_dynamic_product_menu(call, "rdp")
     
-    @bot.callback_query_handler(func=lambda call: call.data == "method_menu")
-    def method_menu(call):
-        create_dynamic_product_menu(call, "methods")
-    
     @bot.callback_query_handler(func=lambda call: call.data == "method_bins_menu")
     def method_bins_menu(call):
         if handle_unavailable_section(bot, call, "bins_methods"):
@@ -582,20 +910,8 @@ Share this unique link with your friends. Every time someone starts the bot usin
 
     @bot.callback_query_handler(func=lambda call: call.data == "custom_cc_menu")
     def custom_cc_menu(call):
-        """Shows custom CC generation interface"""
-        text = (
-            "🎛️ <b>Custom Credit Card Generator</b>\n\n"
-            "Generate custom credit cards with your specifications:\n\n"
-            "💰 <b>Price:</b> $25 per card\n"
-            "🔧 <b>Options:</b> Country, Bank, Type, Level\n"
-            "⚡ <b>Generated instantly</b> upon payment"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🎯 Start Custom Generation", callback_data="start_custom_cc"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back to CC Shop", callback_data="cc_menu"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        """Shows custom CC products from the product management system"""
+        create_dynamic_product_menu(call, "custom_ccs")
 
     @bot.callback_query_handler(func=lambda call: call.data == "enter_bin_menu")
     def enter_bin_menu(call):
@@ -962,10 +1278,14 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                 types.InlineKeyboardButton("👥 Users", callback_data="admin_users_menu"),
                 types.InlineKeyboardButton("🔎 Lookup", callback_data="admin_lookup_menu")
             )
-            markup.add(
-                types.InlineKeyboardButton("💬 User Chat", callback_data="admin_user_chat"),
-                types.InlineKeyboardButton("📱 Payments", callback_data="admin_payments_menu")
-            )
+            # Only show User Chat for non-owners (owners have it in Owner Panel)
+            if not is_owner:
+                markup.add(
+                    types.InlineKeyboardButton("💬 User Chat", callback_data="admin_user_chat"),
+                    types.InlineKeyboardButton("📱 Payments", callback_data="admin_payments_menu")
+                )
+            else:
+                markup.add(types.InlineKeyboardButton("📱 Payments", callback_data="admin_payments_menu"))
             
             # 💬 SUPPORT SYSTEM 💬
             markup.add(
@@ -977,27 +1297,21 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
                 types.InlineKeyboardButton("🏆 Referrals", callback_data="admin_referrals_menu"),
                 types.InlineKeyboardButton("🔑 Pro Keys", callback_data="admin_keys_menu")
             )
-            
-            # 🎮 SPECIAL FEATURES 🎮
             markup.add(
                 types.InlineKeyboardButton("🎁 Giveaway", callback_data="admin_giveaway_menu"),
-                types.InlineKeyboardButton("📊 Analytics", callback_data="admin_analytics_menu")
+                types.InlineKeyboardButton("📈 Analytics", callback_data="admin_analytics_menu")
             )
             
             if is_owner:
-                # 👑 OWNER EXCLUSIVE 👑
+                # 👑 OWNER EXCLUSIVE 👑 (non-duplicates only)
                 markup.add(
-                    types.InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast_menu"),
+                    types.InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
                     types.InlineKeyboardButton("🖼️ Media", callback_data="admin_media_menu")
                 )
-                markup.add(
-                    types.InlineKeyboardButton("🧩 Admins", callback_data="admin_manage_admins"),
-                    types.InlineKeyboardButton("🎛️ Status", callback_data="status_manager")
-                )
+                # Settings only (Admins & Status Manager are in Owner Panel)
                 markup.add(
                     types.InlineKeyboardButton("⚙️ Settings", callback_data="admin_settings_menu")
                 )
-        
         # Section-specific admin buttons
         for section in section_admin_sections:
             markup.add(types.InlineKeyboardButton(
@@ -1010,2695 +1324,1156 @@ To ensure a fair and secure experience for everyone, please adhere to the follow
         
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    # ===== ADMIN SUB-MENUS =====
-    
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_products_menu")
-    def admin_products_menu(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        
-        text = (
-            "📦 <b>Product Management</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Manage your store products by category:\n\n"
-            "🛍️ <b>Manage by Category:</b> Add, edit, or remove products\n"
-            "📋 <b>Browse Inventory:</b> View all products by category\n"
-            "� <b>Store Analytics:</b> Category statistics and insights\n\n"
-            "<i>Select an action to get started:</i>"
-        )
-        
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_giveaway_menu")
+    def admin_giveaway_menu_callback(call):
+        """Displays the giveaway management menu."""
+        text = "🎁 <b>Giveaway Management</b>\n\nSelect an option:"
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("🛍️ Manage Products by Category", callback_data="admin_manage_products")
+            types.InlineKeyboardButton("🏆 Pick Winner", callback_data="admin_pick_winner"),
+            types.InlineKeyboardButton("🎪 New Contest", callback_data="admin_new_contest"),
+            types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")
         )
-        markup.add(
-            types.InlineKeyboardButton("📋 Browse Product Inventory", callback_data="admin_browse_inventory"),
-            types.InlineKeyboardButton("📊 View Store Statistics", callback_data="admin_store_stats")
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_pick_winner")
+    def admin_pick_winner_callback(call):
+        """Picks a random winner from all registered users."""
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id, username FROM users ORDER BY RANDOM() LIMIT 1")
+            winner = cursor.fetchone()
         
+        if winner:
+            winner_id, winner_name = winner
+            text = f"🏆 <b>Winner!</b>\n\nCongratulations to <b>{winner_name}</b> (ID: <code>{winner_id}</code>)!"
+        else:
+            text = "No users found to pick a winner from."
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Giveaway", callback_data="admin_giveaway_menu"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_new_contest")
+    def admin_new_contest_callback(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Access Denied! Only the owner can start a new contest.", show_alert=True)
+            return
+        
+        user_states[call.from_user.id] = "awaiting_contest_message"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Cancel", callback_data="admin_giveaway_menu"))
+        bot.edit_message_text("🎪 <b>New Contest</b>\n\nPlease send the announcement message for the new contest. This will be broadcast to all users.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_contest_message")
+    def handle_contest_message(message):
+        if message.from_user.id != ADMIN_ID:
+            return
+
+        del user_states[message.from_user.id]
+        
+        bot.send_message(message.chat.id, "⏳ Announcing the new contest to all users...")
+
+        def _broadcast_contest():
+            with sqlite3.connect(DB_NAME) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM users WHERE COALESCE(is_active, 1) = 1")
+                users = cursor.fetchall()
+
+            sent_count = 0
+            failed_count = 0
+            for user in users:
+                user_id = user[0]
+                try:
+                    bot.send_message(user_id, f"🎉 <b>New Contest!</b> 🎉\n\n{message.text}", parse_mode="HTML")
+                    sent_count += 1
+                except Exception as e:
+                    print(f"Failed to send contest announcement to {user_id}: {e}")
+                    failed_count += 1
+                time.sleep(0.1)
+
+            bot.send_message(message.chat.id, f"✅ Contest announced!\n\nSent: {sent_count}\nFailed: {failed_count}")
+
+        threading.Thread(target=_broadcast_contest).start()
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_users_menu")
+    def admin_users_menu_callback(call):
+        """Displays the user management menu."""
+        text = "👥 <b>User Management</b>\n\nSelect an option:"
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("📋 All Users", callback_data="admin_all_users"),
+            types.InlineKeyboardButton("💰 Top Balances", callback_data="admin_top_balances"),
+            types.InlineKeyboardButton("🏆 Top Referrers", callback_data="admin_top_referrers"),
+            types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")
+        )
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_all_users")
+    def admin_all_users_callback(call):
+        """Displays a list of all registered users."""
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id, username, balance, registration_date FROM users ORDER BY registration_date DESC LIMIT 20")
+            users = cursor.fetchall()
+        
+        text = "📋 <b>All Users (Recent 20)</b>\n\n"
+        if not users:
+            text += "No users found."
+        else:
+            for user in users:
+                text += f"<b>ID:</b> <code>{user[0]}</code>\n"
+                text += f"<b>Name:</b> {user[1]}\n"
+                text += f"<b>Balance:</b> ${user[2]:.2f}\n"
+                text += f"<b>Joined:</b> {user[3]}\n"
+                text += "━━━━━━━━━━━━\n"
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Users", callback_data="admin_users_menu"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_products_menu")
+    def admin_products_menu_callback(call):
+        """Displays the product management menu."""
+        text = "📦 <b>Product Management</b>\n\nSelect a category to manage:"
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        
+        # Dynamically create buttons from CATEGORY_NAMES
+        buttons = [
+            types.InlineKeyboardButton(name, callback_data=f"admin_cat_menu_{key}")
+            for key, name in CATEGORY_NAMES.items()
+        ]
+        
+        # Arrange buttons in rows of 2
+        for i in range(0, len(buttons), 2):
+            if i + 1 < len(buttons):
+                markup.row(buttons[i], buttons[i+1])
+            else:
+                markup.row(buttons[i])
+
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot.callback_query_handler(func=lambda call: call.data == "admin_orders_menu")
-    def admin_orders_menu(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        
-        text = (
-            "📊 <b>Order Management</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Track and manage all customer orders:\n\n"
-            "📋 <b>Recent Orders:</b> View latest transactions\n"
-            "🔍 <b>Search Orders:</b> Find specific orders\n"
-            "📈 <b>Sales Analytics:</b> Revenue & statistics\n"
-            "⚠️ <b>Pending Orders:</b> Orders needing attention\n"
-            "📅 <b>Order History:</b> Historical data"
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=2)
+    def admin_orders_menu_callback(call):
+        """Displays the order management menu."""
+        text = "📊 <b>Order Management</b>\n\nSelect an option:"
+        markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("📋 Recent Orders", callback_data="admin_orders"),
-            types.InlineKeyboardButton("🔍 Search Orders", callback_data="admin_search_orders")
-        )
-        markup.add(
+            types.InlineKeyboardButton("📋 Recent Orders", callback_data="admin_recent_orders"),
+            types.InlineKeyboardButton("⏳ Pending Orders", callback_data="admin_pending_orders"),
+            types.InlineKeyboardButton("🔍 Search Orders", callback_data="admin_search_orders"),
             types.InlineKeyboardButton("📈 Sales Report", callback_data="admin_sales_report"),
-            types.InlineKeyboardButton("⚠️ Pending Orders", callback_data="admin_pending_orders")
+            types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")
         )
-        markup.add(
-            types.InlineKeyboardButton("📅 Order History", callback_data="admin_order_history"),
-            types.InlineKeyboardButton("💳 Payment Issues", callback_data="admin_payment_issues")
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_users_menu")
-    def admin_users_menu(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_recent_orders")
+    def admin_recent_orders_callback(call):
+        """Displays the 10 most recent orders."""
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT order_id, user_id, item_name, price_usd, payment_status, creation_date FROM orders ORDER BY creation_date DESC LIMIT 10")
+            orders = cursor.fetchall()
         
-        text = (
-            "👥 <b>User Management</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Manage all registered users:\n\n"
-            "👤 <b>User List:</b> View all registered users\n"
-            "🔍 <b>User Search:</b> Find specific users\n"
-            "⚡ <b>User Stats:</b> Activity statistics\n"
-            "🚫 <b>User Actions:</b> Ban/unban users\n"
-            "💰 <b>Credits:</b> Manage user credits"
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("👥 All Users", callback_data="admin_users"),
-            types.InlineKeyboardButton("🔍 User Search", callback_data="admin_user_lookup")
-        )
-        markup.add(
-            types.InlineKeyboardButton("⚡ User Stats", callback_data="admin_user_stats"),
-            types.InlineKeyboardButton("🚫 Manage Bans", callback_data="admin_user_bans")
-        )
-        markup.add(
-            types.InlineKeyboardButton("💰 Manage Credits", callback_data="admin_user_credits"),
-            types.InlineKeyboardButton("📊 Activity Report", callback_data="admin_user_activity")
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        
+        text = "📋 <b>Recent Orders</b>\n\n"
+        if not orders:
+            text += "No orders found."
+        else:
+            for order in orders:
+                text += f"<b>ID:</b> <code>{order[0]}</code>\n"
+                text += f"<b>User:</b> <code>{order[1]}</code>\n"
+                text += f"<b>Item:</b> {order[2]}\n"
+                text += f"<b>Price:</b> ${order[3]}\n"
+                text += f"<b>Status:</b> {order[4]}\n"
+                text += f"<b>Date:</b> {order[5]}\n"
+                text += "━━━━━━━━━━━━\n"
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Orders", callback_data="admin_orders_menu"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_keys_menu")
-    def admin_keys_menu(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_pending_orders")
+    def admin_pending_orders_callback(call):
+        """Displays orders with pending statuses (updated to new status constants)."""
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT order_id, user_id, item_name, price_usd, payment_status, creation_date FROM orders WHERE payment_status IN ('PENDING_PAYMENT','PENDING_APPROVAL') ORDER BY creation_date DESC LIMIT 10")
+            orders = cursor.fetchall()
         
-        text = (
-            "🔑 <b>Pro Keys Management</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Manage premium access keys:\n\n"
-            "➕ <b>Generate Keys:</b> Create new pro keys\n"
-            "📋 <b>View Keys:</b> See all generated keys\n"
-            "🗑️ <b>Delete Keys:</b> Remove unused keys\n"
-            "📊 <b>Usage Stats:</b> Key usage statistics\n"
-            "⏰ <b>Expiry:</b> Set key expiration dates"
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("➕ Generate Keys", callback_data="generate_pro_keys"),
-            types.InlineKeyboardButton("📋 View All Keys", callback_data="manage_pro_keys")
-        )
-        markup.add(
-            types.InlineKeyboardButton("🗑️ Delete Keys", callback_data="delete_pro_keys"),
-            types.InlineKeyboardButton("📊 Key Statistics", callback_data="pro_key_stats")
-        )
-        markup.add(
-            types.InlineKeyboardButton("⏰ Set Expiry", callback_data="set_key_expiry"),
-            types.InlineKeyboardButton("🔄 Bulk Actions", callback_data="bulk_key_actions")
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        
+        text = "⏳ <b>Pending Orders</b>\n\n"
+        if not orders:
+            text += "No pending orders found."
+        else:
+            for order in orders:
+                text += f"<b>ID:</b> <code>{order[0]}</code>\n"
+                text += f"<b>User:</b> <code>{order[1]}</code>\n"
+                text += f"<b>Item:</b> {order[2]}\n"
+                text += f"<b>Price:</b> ${order[3]}\n"
+                text += f"<b>Status:</b> {order[4]}\n"
+                text += f"<b>Date:</b> {order[5]}\n"
+                text += "━━━━━━━━━━━━\n"
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Orders", callback_data="admin_orders_menu"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    # Add handlers for reorganized product management menu
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_browse_inventory")
-    def admin_browse_inventory(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        
-        # Load products and show inventory summary
-        try:
-            from main import load_products
-            products = load_products()
-            
-            text = (
-                "📋 <b>Product Inventory</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "<b>Current Store Inventory:</b>\n\n"
-            )
-            
-            total_products = 0
-            for category, items in products.items():
-                if isinstance(items, list) and items:
-                    count = len(items)
-                    total_products += count
-                    category_display = category.replace('_', ' ').title()
-                    text += f"📦 <b>{category_display}:</b> {count} items\n"
-            
-            if total_products == 0:
-                text += "<i>No products found in inventory.</i>\n"
+    def create_coming_soon_handler(callback_data, back_button_cb):
+        """Factory to create a 'Coming Soon' handler."""
+        @bot.callback_query_handler(func=lambda call: call.data == callback_data)
+        def coming_soon_handler(call):
+            text = "🚧 <b>Coming Soon!</b>\n\nThis feature is currently under development."
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data=back_button_cb))
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        return coming_soon_handler
+
+    # NOTE: Support Center dashboard handler removed here to allow the canonical implementation
+    # in perfect_support.py to be the single source of truth. This avoids duplicate registration
+    # conflicts for callback data 'admin_support_dashboard'.
+
+    # Real implementations replacing earlier placeholders
+
+    def _is_global_or_owner(uid: int):
+        if uid == ADMIN_ID:
+            return True
+        with sqlite3.connect(DB_NAME) as _c:
+            cur = _c.cursor(); cur.execute("SELECT 1 FROM admins WHERE user_id = ?", (uid,))
+            return cur.fetchone() is not None
+
+    # ----- Lookup -----
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_lookup_menu")
+    def admin_lookup_menu(call):
+        if not _is_global_or_owner(call.from_user.id):
+            bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+            return
+        user_states[call.from_user.id] = "awaiting_lookup_query"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
+        bot.edit_message_text("🔎 <b>User Lookup</b>\n\nSend a <code>user_id</code> or @username to view details.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == "awaiting_lookup_query")
+    def handle_lookup_query(message):
+        if not _is_global_or_owner(message.from_user.id):
+            return
+        query = message.text.strip()
+        del user_states[message.from_user.id]
+        target_id = None
+        username = None
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor()
+            if query.startswith('@'):
+                username = query[1:]
+                c.execute("SELECT user_id, username, balance_usd, referral_count, join_date, cc_credits, is_pro FROM users WHERE username = ?", (username,))
             else:
-                text += f"\n💼 <b>Total Products:</b> {total_products} items"
-            
-            text += "\n\n<i>Select a category to view detailed inventory:</i>"
-            
-            markup = types.InlineKeyboardMarkup(row_width=2)
-            
-            # Add category buttons for browsing
-            for category, items in products.items():
-                if isinstance(items, list) and items:
-                    category_display = category.replace('_', ' ').title()
-                    markup.add(types.InlineKeyboardButton(
-                        f"📦 {category_display} ({len(items)})", 
-                        callback_data=f"browse_category_{category}"
-                    ))
-            
-            markup.add(types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu"))
-            
-        except Exception as e:
-            text = f"❌ <b>Error Loading Inventory</b>\n\nCould not load product data: {str(e)}"
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-    
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_store_stats")
-    def admin_store_stats(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+                try:
+                    target_id = int(query)
+                except Exception:
+                    bot.reply_to(message, "❌ Invalid input. Send numeric ID or @username.")
                     return
-        
-        try:
-            from main import load_products
-            products = load_products()
-            
-            # Calculate statistics
-            total_products = 0
-            category_stats = {}
-            
-            for category, items in products.items():
-                if isinstance(items, list):
-                    count = len(items)
-                    total_products += count
-                    category_stats[category] = count
-            
-            # Sort categories by product count
-            sorted_categories = sorted(category_stats.items(), key=lambda x: x[1], reverse=True)
-            
-            text = (
-                "📊 <b>Store Statistics</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"💼 <b>Total Products:</b> {total_products}\n"
-                f"📂 <b>Active Categories:</b> {len([c for c in category_stats.values() if c > 0])}\n\n"
-                "<b>Category Breakdown:</b>\n\n"
-            )
-            
-            for category, count in sorted_categories:
-                if count > 0:
-                    category_display = category.replace('_', ' ').title()
-                    percentage = (count / total_products * 100) if total_products > 0 else 0
-                    bar = "▓" * min(10, int(percentage / 10))
-                    text += f"📦 <b>{category_display}:</b> {count} ({percentage:.1f}%)\n{bar}\n\n"
-            
-            if total_products == 0:
-                text += "<i>No products in store yet.</i>"
-            
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🔄 Refresh Stats", callback_data="admin_store_stats"))
-            markup.add(types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu"))
-            
-        except Exception as e:
-            text = f"❌ <b>Error Loading Statistics</b>\n\nCould not calculate stats: {str(e)}"
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-    
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("browse_category_"))
-    def browse_category_details(call):
+                c.execute("SELECT user_id, username, balance_usd, referral_count, join_date, cc_credits, is_pro FROM users WHERE user_id = ?", (target_id,))
+            row = c.fetchone()
+            if not row:
+                bot.reply_to(message, "No user found.")
+                return
+            uid, uname, bal, refs, join_date, credits, is_pro = row
+            c.execute("SELECT COUNT(*) FROM orders WHERE user_id = ?", (uid,))
+            order_count = c.fetchone()[0]
+        text = (
+            "👤 <b>User Profile</b>\n\n"
+            f"<b>ID:</b> <code>{uid}</code>\n"
+            f"<b>Username:</b> {uname or '-'}\n"
+            f"<b>Balance:</b> ${bal:.2f}\n"
+            f"<b>Referrals:</b> {refs}\n"
+            f"<b>Orders:</b> {order_count}\n"
+            f"<b>CC Credits:</b> {credits}{' (∞ PRO)' if is_pro else ''}\n"
+            f"<b>Joined:</b> {join_date}\n"
+        )
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
+        bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=markup)
+
+    # ----- Broadcast -----
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
+    def admin_broadcast(call):
         if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        
-        try:
-            category = call.data.split("_", 2)[2]  # Get category from browse_category_{category}
-            from main import load_products
-            products = load_products()
-            
-            category_display = category.replace('_', ' ').title()
-            items = products.get(category, [])
-            
-            text = (
-                f"📦 <b>{category_display} - Detailed View</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-            )
-            
-            if not items:
-                text += f"<i>No products found in {category_display} category.</i>"
-            else:
-                text += f"<b>Total Items:</b> {len(items)}\n\n"
-                
-                # Show first few items as preview
-                preview_count = min(5, len(items))
-                text += f"<b>Sample Items (showing {preview_count}/{len(items)}):</b>\n\n"
-                
-                for i, item in enumerate(items[:preview_count]):
-                    if isinstance(item, dict):
-                        name = item.get('name', f'Item {i+1}')
-                        price = item.get('price', 'N/A')
-                        text += f"🔸 <b>{name}</b> - ${price}\n"
-                    else:
-                        text += f"🔸 {str(item)[:50]}{'...' if len(str(item)) > 50 else ''}\n"
-                
-                if len(items) > preview_count:
-                    text += f"\n<i>...and {len(items) - preview_count} more items</i>"
-            
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton(f"🔧 Manage {category_display}", callback_data=f"admin_cat_menu_{category}"))
-            markup.add(types.InlineKeyboardButton("⬅️ Back to Inventory", callback_data="admin_browse_inventory"))
-            
-        except Exception as e:
-            text = f"❌ <b>Error Loading Category</b>\n\nCould not load {category}: {str(e)}"
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("⬅️ Back to Inventory", callback_data="admin_browse_inventory"))
-        
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True)
+            return
+        user_states[call.from_user.id] = "awaiting_broadcast_message"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Cancel", callback_data="admin_panel"))
+        bot.edit_message_text("📢 <b>Broadcast Message</b>\n\nSend the message text (Markdown/HTML allowed).", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == "awaiting_broadcast_message")
+    def handle_broadcast_message(message):
+        if message.from_user.id != ADMIN_ID:
+            return
+        content = message.text
+        user_states[message.from_user.id] = f"broadcast_confirm::{content}"
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("✅ Send", callback_data="broadcast_send"),
+            types.InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")
+        )
+        bot.send_message(message.chat.id, "Preview:\n\n" + content, reply_markup=markup)
+
+    @bot.callback_query_handler(func=lambda call: call.data in ["broadcast_send", "broadcast_cancel"])
+    def broadcast_decision(call):
+        state = user_states.get(call.from_user.id, '')
+        if not state.startswith("broadcast_confirm::"):
+            bot.answer_callback_query(call.id, "Expired", show_alert=True)
+            return
+        content = state.replace("broadcast_confirm::", "")
+        if call.data == "broadcast_cancel":
+            user_states.pop(call.from_user.id, None)
+            bot.edit_message_text("Broadcast canceled.", call.message.chat.id, call.message.message_id)
+            return
+        # send
+        bot.edit_message_text("🚀 Starting broadcast...", call.message.chat.id, call.message.message_id)
+        user_states.pop(call.from_user.id, None)
+        def _do_broadcast(msg_id, chat_id):
+            sent = 0; failed = 0
+            try:
+                with sqlite3.connect(DB_NAME) as conn:
+                    cur = conn.cursor(); cur.execute("SELECT user_id FROM users WHERE COALESCE(is_active,1)=1")
+                    targets = [r[0] for r in cur.fetchall()]
+            except Exception as e:
+                bot.send_message(chat_id, f"DB error: {e}")
+                return
+            for idx, uid in enumerate(targets, start=1):
+                try:
+                    bot.send_message(uid, content, parse_mode="HTML")
+                    sent += 1
+                except Exception:
+                    failed += 1
+                if idx % 50 == 0:
+                    try:
+                        bot.edit_message_text(f"📢 Broadcasting... Sent: {sent} | Failed: {failed}", chat_id, msg_id)
+                    except Exception:
+                        pass
+                time.sleep(0.03)
+            try:
+                bot.edit_message_text(f"✅ Broadcast finished. Sent: {sent} | Failed: {failed}", chat_id, msg_id)
+            except Exception:
+                bot.send_message(chat_id, f"✅ Broadcast finished. Sent: {sent} | Failed: {failed}")
+        threading.Thread(target=_do_broadcast, args=(call.message.message_id, call.message.chat.id), daemon=True).start()
+
+    # ----- Top balances & referrers -----
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_top_balances")
+    def admin_top_balances(call):
+        if not _is_global_or_owner(call.from_user.id):
+            bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor(); c.execute("SELECT user_id, username, balance_usd FROM users ORDER BY balance_usd DESC LIMIT 10")
+            rows = c.fetchall()
+        text = "💰 <b>Top Balances</b>\n\n" + ("No users." if not rows else "")
+        for i, r in enumerate(rows, start=1):
+            text += f"{i}. <code>{r[0]}</code> {r[1] or ''} - ${r[2]:.2f}\n"
+        markup = types.InlineKeyboardMarkup(); markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_users_menu"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_top_referrers")
+    def admin_top_referrers(call):
+        if not _is_global_or_owner(call.from_user.id):
+            bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor(); c.execute("SELECT user_id, username, referral_count FROM users ORDER BY referral_count DESC LIMIT 10")
+            rows = c.fetchall()
+        text = "🏆 <b>Top Referrers</b>\n\n" + ("No users." if not rows else "")
+        for i, r in enumerate(rows, start=1):
+            text += f"{i}. <code>{r[0]}</code> {r[1] or ''} - {r[2]} refs\n"
+        markup = types.InlineKeyboardMarkup(); markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_users_menu"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    # ----- Referrals summary -----
     @bot.callback_query_handler(func=lambda call: call.data == "admin_referrals_menu")
     def admin_referrals_menu(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        
-        text = (
-            "🏆 <b>Referral Management</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Manage referral system:\n\n"
-            "📊 <b>Top Referrers:</b> See most active referrers\n"
-            "🎁 <b>Referral Rewards:</b> Manage reward system\n"
-            "📈 <b>Statistics:</b> View referral analytics"
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("🏆 Top Referrers", callback_data="admin_top_referrers"),
-            types.InlineKeyboardButton("📊 Referral Stats", callback_data="admin_referral_stats")
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_giveaway_menu")
-    def admin_giveaway_menu(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Only owner can access this!", show_alert=True)
+        if not _is_global_or_owner(call.from_user.id):
+            bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
             return
-        
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor();
+            c.execute("SELECT COUNT(*) FROM users")
+            total_users = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM users WHERE referral_count > 0")
+            ref_users = c.fetchone()[0]
+            c.execute("SELECT SUM(referral_count) FROM users")
+            total_refs = c.fetchone()[0] or 0
+            c.execute("SELECT user_id, username, referral_count FROM users ORDER BY referral_count DESC LIMIT 5")
+            top5 = c.fetchall()
+        adoption = (ref_users / total_users * 100) if total_users else 0
         text = (
-            "🎁 <b>Giveaway Management</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Manage giveaways and contests:\n\n"
-            "🎯 <b>Select Winner:</b> Pick a random winner\n"
-            "🎪 <b>Create Contest:</b> Start new giveaway\n"
-            "📊 <b>History:</b> View past giveaways"
+            "🔗 <b>Referrals Overview</b>\n\n"
+            f"<b>Total Users:</b> {total_users}\n"
+            f"<b>Total Referrals:</b> {total_refs}\n"
+            f"<b>Users With >=1 Referral:</b> {ref_users} ({adoption:.1f}%)\n\n"
+            "<b>Top 5:</b>\n"
         )
-        
-        markup = types.InlineKeyboardMarkup(row_width=2)
+        for r in top5:
+            text += f"• <code>{r[0]}</code> {r[1] or ''} - {r[2]}\n"
+        markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("🎯 Select Winner", callback_data="admin_giveaway"),
-            types.InlineKeyboardButton("🎪 New Contest", callback_data="admin_new_contest")
+            types.InlineKeyboardButton("🏆 Full Top Referrers", callback_data="admin_top_referrers"),
+            types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")
         )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_manage_section_admins")
-    def admin_manage_section_admins(call):
-        # Only owner or global admins can manage section admins
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
+    # ----- Keys menu integration -----
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_keys_menu")
+    def admin_keys_menu(call):
+        if not _is_global_or_owner(call.from_user.id):
+            bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+            return
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("➕ Add Section Admin", callback_data="owner_add_section_admin"))
-        markup.add(types.InlineKeyboardButton("➖ Remove Section Admin", callback_data="owner_remove_section_admin"))
-        markup.add(types.InlineKeyboardButton("👥 List Section Admins", callback_data="owner_list_section_admins"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
-        bot.edit_message_text("<b>🧩 Manage Section Admins</b>\n\nUse the options below to assign or remove section-specific admins.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    # =============================
-    # ===== STATUS MANAGER ======
-    # =============================
-
-    @bot.callback_query_handler(func=lambda call: call.data == "status_manager")
-    def status_manager_callback(call):
-        # Allow owner and global admins to access status manager
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-
-        # Load or create default section statuses
-        try:
-            with open('section_status.json', 'r') as f:
-                statuses = json.load(f)
-        except FileNotFoundError:
-            # Create default status configuration
-            statuses = {
-                "cc_shop": "available",
-                "bins_methods": "available", 
-                "gift_cards": "coming_soon",
-                "hacks": "available",
-                "dumps": "available",
-                "rdp": "available",
-                "support": "available",
-                "ai_search": "available"
-            }
-            with open('section_status.json', 'w') as f:
-                json.dump(statuses, f, indent=4)
-
-        text = (
-            "🎛️ <b>Button Status Manager</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Toggle the availability status of bot sections:\n\n"
-            "🟢 <b>Available</b> - Fully functional\n"
-            "🟡 <b>Coming Soon</b> - Shows preview message\n"
-            "🔴 <b>Maintenance</b> - Temporarily disabled\n\n"
-            "<b>Current Status:</b>"
+        markup.add(
+            types.InlineKeyboardButton("🔑 Manage Pro Keys", callback_data="manage_pro_keys"),
+            types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")
         )
-        
-        status_icons = {
-            "available": "🟢",
-            "coming_soon": "🟡", 
-            "maintenance": "🔴"
-        }
+        bot.edit_message_text("🔑 <b>Pro Keys</b>\n\nManage or generate keys.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for section, status in statuses.items():
-            icon = status_icons.get(status, "⚪")
-            section_name = section.replace('_', ' ').title()
-            button_text = f"{icon} {section_name}: {status.replace('_', ' ').title()}"
-            markup.add(types.InlineKeyboardButton(button_text, callback_data=f"status_toggle_{section}"))
-        
-        markup.add(types.InlineKeyboardButton("🔄 Reset All to Available", callback_data="status_reset_all"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        safe_edit_message(bot, call.message.chat.id, call.message.message_id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("status_toggle_"))
-    def status_toggle_callback(call):
-        # Allow owner and global admins to toggle status
+    # ----- Media manager -----
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_media_menu")
+    def admin_media_menu(call):
         if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-
-        section = call.data.replace("status_toggle_", "")
-        
-        try:
-            with open('section_status.json', 'r') as f:
-                statuses = json.load(f)
-        except FileNotFoundError:
-            statuses = {}
-
-        current_status = statuses.get(section, "available")
-        
-        # Cycle through statuses: available -> coming_soon -> maintenance -> available
-        if current_status == "available":
-            new_status = "coming_soon"
-        elif current_status == "coming_soon":
-            new_status = "maintenance"
-        else:  # maintenance or other
-            new_status = "available"
-        
-        statuses[section] = new_status
-
-        with open('section_status.json', 'w') as f:
-            json.dump(statuses, f, indent=4)
-
-        # Show updated status with proper formatting
-        status_display = {
-            "available": "🟢 Available",
-            "coming_soon": "🟡 Coming Soon", 
-            "maintenance": "🔴 Maintenance"
-        }
-        
-        bot.answer_callback_query(call.id, f"✅ {section.replace('_', ' ').title()} → {status_display.get(new_status, new_status)}")
-        status_manager_callback(call)
-
-    @bot.callback_query_handler(func=lambda call: call.data == "status_reset_all")
-    def status_reset_all(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        
-        # Reset all sections to available
-        statuses = {
-            "cc_shop": "available",
-            "bins_methods": "available", 
-            "gift_cards": "available",
-            "hacks": "available",
-            "dumps": "available",
-            "rdp": "available",
-            "support": "available",
-            "ai_search": "available"
-        }
-        
-        with open('section_status.json', 'w') as f:
-            json.dump(statuses, f, indent=4)
-            
-        bot.answer_callback_query(call.id, "✅ All sections reset to 🟢 Available")
-        status_manager_callback(call)
-
-    # ===== ANALYTICS FUNCTIONALITY =====
-    
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_analytics_menu")
-    def admin_analytics_menu(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        
-        text = (
-            "📊 <b>Analytics Dashboard</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "View comprehensive bot analytics:\n\n"
-            "📈 <b>User Analytics:</b> User activity & engagement\n"
-            "💰 <b>Revenue Analytics:</b> Sales & financial data\n" 
-            "📊 <b>Product Analytics:</b> Best selling items\n"
-            "⚡ <b>Performance:</b> Bot performance metrics\n"
-            "📅 <b>Reports:</b> Weekly/monthly summaries"
-        )
-        
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True)
+            return
+        counts = get_media_pool_counts()
+        text = "🖼️ <b>Media Pools</b>\n\n" + "\n".join([f"<b>{k}:</b> {v}" for k, v in counts.items()])
         markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("👥 User Analytics", callback_data="analytics_users"),
-            types.InlineKeyboardButton("💰 Revenue Analytics", callback_data="analytics_revenue")
-        )
-        markup.add(
-            types.InlineKeyboardButton("📦 Product Analytics", callback_data="analytics_products"),
-            types.InlineKeyboardButton("⚡ Performance", callback_data="analytics_performance")
-        )
-        markup.add(
-            types.InlineKeyboardButton("📅 Weekly Report", callback_data="analytics_weekly"),
-            types.InlineKeyboardButton("📊 Monthly Report", callback_data="analytics_monthly")
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        
+        for kind in counts.keys():
+            markup.add(types.InlineKeyboardButton(f"🗑️ {kind}", callback_data=f"media_clear_kind_{kind}"))
+        markup.add(types.InlineKeyboardButton("🧹 Clear All", callback_data="media_clear_all"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("media_clear_kind_") or call.data == "media_clear_all")
+    def media_clear_actions(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True)
+            return
+        if call.data == "media_clear_all":
+            clear_media_pool()
+        else:
+            kind = call.data.replace("media_clear_kind_", "")
+            clear_media_pool(kind)
+        bot.answer_callback_query(call.id, "Cleared")
+        # Refresh
+        counts = get_media_pool_counts()
+        text = "🖼️ <b>Media Pools</b>\n\n" + "\n".join([f"<b>{k}:</b> {v}" for k, v in counts.items()])
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for kind in counts.keys():
+            markup.add(types.InlineKeyboardButton(f"🗑️ {kind}", callback_data=f"media_clear_kind_{kind}"))
+        markup.add(types.InlineKeyboardButton("🧹 Clear All", callback_data="media_clear_all"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            pass
+
+    # ----- Status manager redirect -----
+    @bot.callback_query_handler(func=lambda call: call.data == "status_manager")
+    def status_manager(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True)
+            return
+        # Import DB-backed helpers lazily to avoid circular import
+        from admin_meta_db import list_all_statuses, set_section_status
+        # Determine ordered list relative to SECTION_STATUS_OPTIONS duplication (mirror constant from main)
+        status_order = ["coming_soon", "error", "maintenance", "available"]
+        existing = {k: v for k, v in list_all_statuses()}
+        # Define canonical section keys & pretty names
+        sections = [
+            ("gift_cards", "Gift Cards"),
+            ("dumps", "Dumps"),
+            ("hacks", "Hacks"),
+            ("cc", "Credit Cards"),
+            ("bins", "BINs"),
+            ("rdp", "RDP"),
+            ("methods", "Methods"),
+            ("other", "Other"),
+        ]
+        text = "🛠️ <b>Section Status Manager</b>\n\nTap a button to cycle a section through: Coming Soon → Error → Maintenance → Available.\n"
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for key, label in sections:
+            cur = existing.get(key, "coming_soon")
+            emoji = {
+                "coming_soon": "🟡",
+                "error": "🔴",
+                "maintenance": "🛠️",
+                "available": "🟢"
+            }.get(cur, "🟡")
+            # Each button cycles the status
+            markup.add(types.InlineKeyboardButton(f"{emoji} {label}: {cur}", callback_data=f"cycle_status_{key}"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("cycle_status_"))
+    def cycle_status(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True)
+            return
+        from admin_meta_db import list_all_statuses, set_section_status
+        key = call.data.replace("cycle_status_", "")
+        order = ["coming_soon", "error", "maintenance", "available"]
+        existing = {k: v for k, v in list_all_statuses()}
+        cur = existing.get(key, "coming_soon")
+        try:
+            nxt = order[(order.index(cur) + 1) % len(order)]
+        except Exception:
+            nxt = "coming_soon"
+        set_section_status(key, nxt)
+        bot.answer_callback_query(call.id, f"{key} → {nxt}")
+        # Re-render manager
+        try:
+            status_manager(call)
+        except Exception:
+            pass
+
+    # ----- Manage Admins (list & remove) -----
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_manage_admins")
+    def admin_manage_admins(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True)
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor(); c.execute("SELECT user_id, added_at FROM admins ORDER BY added_at DESC")
+            rows = c.fetchall()
+        text = "🧩 <b>Global Admins</b>\n\n" + ("None" if not rows else "")
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for uid, added_at in rows:
+            if uid == ADMIN_ID:
+                continue
+            markup.add(types.InlineKeyboardButton(f"❌ {uid}", callback_data=f"remove_admin_{uid}"))
+            text += f"<code>{uid}</code> (added { (added_at or '')[:10] })\n"
+        markup.add(types.InlineKeyboardButton("👑 Owner Panel", callback_data="owner_panel"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("remove_admin_"))
+    def remove_admin_callback(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True)
+            return
+        try:
+            target_id = int(call.data.replace("remove_admin_", ""))
+            if target_id == ADMIN_ID:
+                bot.answer_callback_query(call.id, "Cannot remove owner", show_alert=True)
+                return
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor(); c.execute("DELETE FROM admins WHERE user_id = ?", (target_id,)); conn.commit()
+            bot.answer_callback_query(call.id, "Removed")
+            admin_manage_admins(call)
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Err: {e}", show_alert=True)
+
+    # ----- Analytics (sales/users/products) -----
+    @bot.callback_query_handler(func=lambda call: call.data == "analytics_sales")
+    def analytics_sales(call):
+        if not _is_global_or_owner(call.from_user.id):
+            bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+            return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor();
+            c.execute("SELECT COUNT(*), COALESCE(SUM(price_usd),0) FROM orders")
+            total_orders, total_rev = c.fetchone()
+            c.execute("SELECT DATE(creation_date), COALESCE(SUM(price_usd),0) FROM orders WHERE creation_date >= DATE('now','-7 day') GROUP BY DATE(creation_date) ORDER BY DATE(creation_date)")
+            last7 = c.fetchall()
+            c.execute("SELECT item_name, COUNT(*) c FROM orders GROUP BY item_name ORDER BY c DESC LIMIT 5")
+            top_items = c.fetchall()
+        text = "📊 <b>Sales Analytics</b>\n\n"
+        text += f"<b>Total Orders:</b> {total_orders}\n<b>Total Revenue:</b> ${total_rev:.2f}\n\n"
+        text += "<b>Last 7 Days:</b>\n" + ("None\n" if not last7 else "\n".join([f"{d}: ${amt:.2f}" for d, amt in last7]) + "\n")
+        text += "\n<b>Top Items:</b>\n" + ("None" if not top_items else "\n".join([f"{nm} ({cnt})" for nm, cnt in top_items]))
+        markup = types.InlineKeyboardMarkup(); markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_analytics_menu"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot.callback_query_handler(func=lambda call: call.data == "analytics_users")
     def analytics_users(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-
+        if not _is_global_or_owner(call.from_user.id):
+            bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+            return
         with sqlite3.connect(DB_NAME) as conn:
-            c = conn.cursor()
-            
-            # Total users
+            c = conn.cursor();
             c.execute("SELECT COUNT(*) FROM users")
             total_users = c.fetchone()[0]
-            
-            # Active users (last 30 days)
-            c.execute("SELECT COUNT(*) FROM users WHERE join_date >= datetime('now', '-30 days')")
-            new_users_month = c.fetchone()[0]
-            
-            # Users with orders
-            c.execute("SELECT COUNT(DISTINCT user_id) FROM orders")
-            paying_users = c.fetchone()[0]
-            
-            # Top referrer
-            c.execute("SELECT username, referral_count FROM users ORDER BY referral_count DESC LIMIT 1")
-            top_referrer = c.fetchone()
-            
+            c.execute("SELECT COUNT(*) FROM users WHERE join_date >= DATE('now','-7 day')")
+            new_week = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM users WHERE COALESCE(is_active,1)=1")
+            active = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM users WHERE referral_count > 0")
+            ref_used = c.fetchone()[0]
         text = (
-            f"👥 <b>User Analytics</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"📊 <b>Total Users:</b> {total_users}\n"
-            f"🆕 <b>New Users (30d):</b> {new_users_month}\n"
-            f"💳 <b>Paying Users:</b> {paying_users}\n"
-            f"🏆 <b>Top Referrer:</b> {top_referrer[0] if top_referrer else 'None'} ({top_referrer[1] if top_referrer else 0} refs)\n\n"
-            f"📈 <b>Conversion Rate:</b> {(paying_users/total_users*100):.1f}%\n"
-            f"🎯 <b>Growth Rate:</b> {(new_users_month/max(total_users-new_users_month, 1)*100):.1f}%"
+            "👥 <b>User Analytics</b>\n\n"
+            f"<b>Total Users:</b> {total_users}\n"
+            f"<b>New (7d):</b> {new_week}\n"
+            f"<b>Active:</b> {active}\n"
+            f"<b>Referral Adoption:</b> { (ref_used/total_users*100) if total_users else 0:.1f}%\n"
         )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Analytics", callback_data="admin_analytics_menu"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "analytics_revenue")
-    def analytics_revenue(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-
-        with sqlite3.connect(DB_NAME) as conn:
-            c = conn.cursor()
-            
-            # Total revenue
-            c.execute("SELECT COALESCE(SUM(price_usd), 0) FROM orders WHERE payment_status = 'approved'")
-            total_revenue = c.fetchone()[0]
-            
-            # Revenue this month
-            c.execute("SELECT COALESCE(SUM(price_usd), 0) FROM orders WHERE payment_status = 'approved' AND creation_date >= datetime('now', 'start of month')")
-            month_revenue = c.fetchone()[0]
-            
-            # Total orders
-            c.execute("SELECT COUNT(*) FROM orders")
-            total_orders = c.fetchone()[0]
-            
-            # Successful orders
-            c.execute("SELECT COUNT(*) FROM orders WHERE payment_status = 'approved'")
-            successful_orders = c.fetchone()[0]
-            
-        text = (
-            f"💰 <b>Revenue Analytics</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"💵 <b>Total Revenue:</b> ${total_revenue:.2f}\n"
-            f"📅 <b>This Month:</b> ${month_revenue:.2f}\n"
-            f"📦 <b>Total Orders:</b> {total_orders}\n"
-            f"✅ <b>Successful Orders:</b> {successful_orders}\n\n"
-            f"📊 <b>Success Rate:</b> {(successful_orders/max(total_orders,1)*100):.1f}%\n"
-            f"💰 <b>Avg Order Value:</b> ${(total_revenue/max(successful_orders,1)):.2f}"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Analytics", callback_data="admin_analytics_menu"))
-        
+        markup = types.InlineKeyboardMarkup(); markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_analytics_menu"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
     @bot.callback_query_handler(func=lambda call: call.data == "analytics_products")
     def analytics_products(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-
-        with sqlite3.connect(DB_NAME) as conn:
-            c = conn.cursor()
-            
-            # Top selling products
-            c.execute("""
-                SELECT item_name, COUNT(*) as sales, SUM(price_usd) as revenue
-                FROM orders 
-                WHERE payment_status = 'approved' 
-                GROUP BY item_name 
-                ORDER BY sales DESC 
-                LIMIT 5
-            """)
-            top_products = c.fetchall()
-            
-        text = (
-            f"📦 <b>Product Analytics</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"<b>🏆 Top Selling Products:</b>\n\n"
-        )
-        
-        if top_products:
-            for i, (name, sales, revenue) in enumerate(top_products, 1):
-                text += f"{i}. <b>{name}</b>\n   📊 Sales: {sales} | 💰 Revenue: ${revenue:.2f}\n\n"
-        else:
-            text += "No sales data available yet."
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Analytics", callback_data="admin_analytics_menu"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "analytics_performance")
-    def analytics_performance(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-
-        import os
-        import datetime
-        
-        # Get bot uptime (approximate)
+        if not _is_global_or_owner(call.from_user.id):
+            bot.answer_callback_query(call.id, "❌ Not authorized", show_alert=True)
+            return
+        # Load products JSON directly
         try:
-            stat = os.stat(__file__)
-            last_restart = datetime.datetime.fromtimestamp(stat.st_mtime)
-            uptime = datetime.datetime.now() - last_restart
-            uptime_str = f"{uptime.days}d {uptime.seconds//3600}h {(uptime.seconds%3600)//60}m"
-        except:
-            uptime_str = "Unknown"
-
-        with sqlite3.connect(DB_NAME) as conn:
-            c = conn.cursor()
-            
-            # Recent activity (last 24h)
-            c.execute("SELECT COUNT(*) FROM orders WHERE creation_date >= datetime('now', '-1 day')")
-            daily_orders = c.fetchone()[0]
-            
-            # Database size
-            c.execute("PRAGMA page_count")
-            page_count = c.fetchone()[0]
-            c.execute("PRAGMA page_size")
-            page_size = c.fetchone()[0]
-            db_size_mb = (page_count * page_size) / (1024 * 1024)
-        
-        text = (
-            f"⚡ <b>Performance Metrics</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"⏰ <b>Bot Uptime:</b> {uptime_str}\n"
-            f"📊 <b>Orders (24h):</b> {daily_orders}\n"
-            f"💾 <b>Database Size:</b> {db_size_mb:.1f} MB\n"
-            f"🔄 <b>Status:</b> ✅ Operational\n\n"
-            f"📈 <b>Performance:</b> Normal\n"
-            f"🚀 <b>Response Time:</b> <1s"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔄 Refresh", callback_data="analytics_performance"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Analytics", callback_data="admin_analytics_menu"))
-        
+            from config import PRODUCTS_FILE
+            with open(PRODUCTS_FILE, 'r', encoding='utf-8') as f:
+                pdata = json.load(f)
+        except Exception:
+            pdata = {}
+        counts = {k: len(v) if isinstance(v, list) else 0 for k, v in pdata.items()}
+        sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:8]
+        text = "🛒 <b>Product Analytics</b>\n\n" + ("No data" if not counts else "\n".join([f"{k}: {v}" for k, v in sorted_counts]))
+        markup = types.InlineKeyboardMarkup(); markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_analytics_menu"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    @bot.callback_query_handler(func=lambda call: call.data == "analytics_weekly")
-    def analytics_weekly_report(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
+    # (admin_user_chat remains placeholder for future full implementation)
 
-        with sqlite3.connect(DB_NAME) as conn:
-            c = conn.cursor()
-            
-            # Weekly stats
-            c.execute("""
-                SELECT 
-                    DATE(creation_date) as date,
-                    COUNT(*) as orders,
-                    SUM(CASE WHEN payment_status = 'approved' THEN price_usd ELSE 0 END) as revenue,
-                    COUNT(DISTINCT user_id) as unique_users
-                FROM orders 
-                WHERE creation_date >= datetime('now', '-7 days')
-                GROUP BY DATE(creation_date)
-                ORDER BY date
-            """)
-            weekly_data = c.fetchall()
-            
-        text = (
-            f"📅 <b>Weekly Analytics Report</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        )
-        
-        if weekly_data:
-            total_orders = sum(row[1] for row in weekly_data)
-            total_revenue = sum(row[2] for row in weekly_data)
-            total_users = len(set(row[3] for row in weekly_data))
-            
-            text += f"📊 <b>Week Summary:</b>\n"
-            text += f"📦 Total Orders: {total_orders}\n"
-            text += f"💰 Total Revenue: ${total_revenue:.2f}\n" 
-            text += f"👥 Active Users: {total_users}\n\n"
-            text += f"📈 <b>Daily Breakdown:</b>\n"
-            
-            for date, orders, revenue, users in weekly_data:
-                text += f"📅 {date}: {orders} orders, ${revenue:.2f}, {users} users\n"
-        else:
-            text += "No data available for the past week."
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Analytics", callback_data="admin_analytics_menu"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "analytics_monthly")
-    def analytics_monthly_report(call):
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-
-        with sqlite3.connect(DB_NAME) as conn:
-            c = conn.cursor()
-            
-            # Monthly stats
-            c.execute("""
-                SELECT 
-                    strftime('%Y-%m', creation_date) as month,
-                    COUNT(*) as orders,
-                    SUM(CASE WHEN payment_status = 'approved' THEN price_usd ELSE 0 END) as revenue,
-                    COUNT(DISTINCT user_id) as unique_users
-                FROM orders 
-                WHERE creation_date >= datetime('now', '-6 months')
-                GROUP BY strftime('%Y-%m', creation_date)
-                ORDER BY month DESC
-            """)
-            monthly_data = c.fetchall()
-            
-        text = (
-            f"📊 <b>Monthly Analytics Report</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        )
-        
-        if monthly_data:
-            for month, orders, revenue, users in monthly_data:
-                text += f"📅 <b>{month}:</b>\n"
-                text += f"   📦 Orders: {orders}\n"
-                text += f"   💰 Revenue: ${revenue:.2f}\n"
-                text += f"   👥 Users: {users}\n\n"
-        else:
-            text += "No monthly data available yet."
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Analytics", callback_data="admin_analytics_menu"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    # ===== MISSING ADMIN MENU HANDLERS =====
-    
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast_menu")
-    def admin_broadcast_menu(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Only owner can access this!", show_alert=True)
-            return
-        
-        text = (
-            "📢 <b>Broadcast Management</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Send messages to all users:\n\n"
-            "📤 <b>Send Broadcast:</b> Send message to all users\n"
-            "📊 <b>Broadcast History:</b> View past broadcasts"
-        )
-        
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_payments_menu")
+    def admin_payments_menu_callback(call):
+        """Displays the payments management menu."""
+        text = "📱 <b>Payments Management</b>\n\nSelect an option:"
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("📤 Send Broadcast", callback_data="admin_broadcast"),
-            types.InlineKeyboardButton("📊 Broadcast History", callback_data="admin_broadcast_history")
+            types.InlineKeyboardButton("⏳ Pending Payments", callback_data="admin_pending_payments"),
+            types.InlineKeyboardButton("✅ Approved Payments", callback_data="admin_approved_payments"),
+            types.InlineKeyboardButton("❌ Rejected Payments", callback_data="admin_rejected_payments"),
+            types.InlineKeyboardButton("🧹 Reject ALL Pending (⚠️)", callback_data="admin_reject_all_pending_confirm"),
+            types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel")
         )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_media_menu")
-    def admin_media_menu(call):
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_reject_all_pending_confirm")
+    def admin_reject_all_pending_confirm(call):
         if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Only owner can access this!", show_alert=True)
-            return
-        
-        # Redirect to existing GIF manager
-        call.data = "admin_manage_gifs"
-        admin_manage_gifs(call)
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_manage_admins")
-    def admin_manage_admins_menu(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Only owner can access this!", show_alert=True)
-            return
-        
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True); return
+        with sqlite3.connect(DB_NAME) as conn:
+            c = conn.cursor(); c.execute("SELECT COUNT(*) FROM orders WHERE payment_status IN ('PENDING_PAYMENT','PENDING_APPROVAL')")
+            pending_count = c.fetchone()[0]
         text = (
-            "🧩 <b>Admin Management</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Manage bot administrators:\n\n"
-            "👥 <b>Global Admins:</b> Full access admins\n"
-            "🔧 <b>Section Admins:</b> Category-specific admins"
+            "🧹 <b>Reject ALL Pending Payments</b>\n\n"
+            f"This will mark <b>{pending_count}</b> pending orders as <code>REJECTED</code>.\n"
+            "Use only for mass clean-up (spam / expired payments).\n\n"
+            "Are you absolutely sure?"
         )
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("➕ Add Global Admin", callback_data="owner_add_admin"),
-            types.InlineKeyboardButton("➖ Remove Global Admin", callback_data="owner_remove_admin"),
-            types.InlineKeyboardButton("👥 List Global Admins", callback_data="owner_list_admins")
+            types.InlineKeyboardButton("✅ Yes, Reject All", callback_data="admin_reject_all_pending_execute"),
+            types.InlineKeyboardButton("❌ Cancel", callback_data="admin_payments_menu")
         )
-        markup.add(
-            types.InlineKeyboardButton("🔧 Manage Section Admins", callback_data="admin_manage_section_admins")
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_reject_all_pending_execute")
+    def admin_reject_all_pending_execute(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True); return
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                c.execute("UPDATE orders SET payment_status='REJECTED' WHERE payment_status IN ('PENDING_PAYMENT','PENDING_APPROVAL')")
+                affected = c.rowcount
+                conn.commit()
+            bot.answer_callback_query(call.id, f"Rejected {affected} orders")
+            # Return to payments menu
+            admin_payments_menu_callback(call)
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Err: {e}", show_alert=True)
+
+    # admin_user_chat deliberately left as placeholder (not yet implemented chat routing UI)
+    # (Removed obsolete 'Coming Soon' payment handlers; real implementations below.)
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_pending_payments")
+    def admin_pending_payments_callback(call):
+        """Displays payments awaiting confirmation or approval."""
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT order_id, user_id, item_name, price_usd, payment_status, creation_date FROM orders WHERE payment_status IN ('PENDING_PAYMENT','PENDING_APPROVAL') ORDER BY creation_date DESC LIMIT 20")
+            orders = cursor.fetchall()
+        
+        text = "⏳ <b>Pending Payments</b>\n\n"
+        if not orders:
+            text += "No pending payments found."
+        else:
+            for order in orders:
+                text += f"<b>ID:</b> <code>{order[0]}</code>\n"
+                text += f"<b>User:</b> <code>{order[1]}</code>\n"
+                text += f"<b>Item:</b> {order[2]}\n"
+                text += f"<b>Price:</b> ${order[3]}\n"
+                text += f"<b>Status:</b> {order[4]}\n"
+                text += f"<b>Date:</b> {order[5]}\n"
+                text += "━━━━━━━━━━━━\n"
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Payments", callback_data="admin_payments_menu"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_approved_payments")
+    def admin_approved_payments_callback(call):
+        """Displays orders that have been completed (delivered or deposited)."""
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT order_id, user_id, item_name, price_usd, payment_status, creation_date FROM orders WHERE payment_status = 'COMPLETED' ORDER BY creation_date DESC LIMIT 20")
+            orders = cursor.fetchall()
+        
+        text = "✅ <b>Approved Payments</b>\n\n"
+        if not orders:
+            text += "No approved payments found."
+        else:
+            for order in orders:
+                text += f"<b>ID:</b> <code>{order[0]}</code>\n"
+                text += f"<b>User:</b> <code>{order[1]}</code>\n"
+                text += f"<b>Item:</b> {order[2]}\n"
+                text += f"<b>Price:</b> ${order[3]}\n"
+                text += f"<b>Status:</b> {order[4]}\n"
+                text += f"<b>Date:</b> {order[5]}\n"
+                text += "━━━━━━━━━━━━\n"
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Payments", callback_data="admin_payments_menu"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_rejected_payments")
+    def admin_rejected_payments_callback(call):
+        """Displays orders with rejected status."""
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT order_id, user_id, item_name, price_usd, payment_status, creation_date FROM orders WHERE payment_status = 'REJECTED' ORDER BY creation_date DESC LIMIT 20")
+            orders = cursor.fetchall()
+        
+        text = "❌ <b>Rejected Payments</b>\n\n"
+        if not orders:
+            text += "No rejected payments found."
+        else:
+            for order in orders:
+                text += f"<b>ID:</b> <code>{order[0]}</code>\n"
+                text += f"<b>User:</b> <code>{order[1]}</code>\n"
+                text += f"<b>Item:</b> {order[2]}\n"
+                text += f"<b>Price:</b> ${order[3]}\n"
+                text += f"<b>Status:</b> {order[4]}\n"
+                text += f"<b>Date:</b> {order[5]}\n"
+                text += "━━━━━━━━━━━━\n"
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Payments", callback_data="admin_payments_menu"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    # ---- Settings Menu (owner only) ----
     @bot.callback_query_handler(func=lambda call: call.data == "admin_settings_menu")
     def admin_settings_menu(call):
         if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Only owner can access this!", show_alert=True)
-            return
-        
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True); return
         text = (
-            "⚙️ <b>Bot Settings</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Configure bot settings:\n\n"
-            "🎛️ <b>Button Status:</b> Toggle section availability\n"
-            "🖼️ <b>Media Pool:</b> Manage GIFs and animations\n"
-            "📊 <b>System Info:</b> View bot system information"
+            "⚙️ <b>Settings</b>\n\n"
+            "Quick shortcuts to management tools:\n"
+            "• Status Manager (toggle section availability)\n"
+            "• Media Manager (GIF pools)\n"
+            "• Manage Admins & Pro Keys\n\n"
+            "Planned additions: pricing rules, auto-expiry, audit exports."
         )
-        
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("🎛️ Button Status Manager", callback_data="status_manager"),
-            types.InlineKeyboardButton("🖼️ Media Pool Manager", callback_data="admin_manage_gifs"),
-            types.InlineKeyboardButton("📊 System Info", callback_data="owner_bot_stats")
+            types.InlineKeyboardButton("🎛️ Status Manager", callback_data="status_manager"),
+            types.InlineKeyboardButton("🖼️ Media Manager", callback_data="admin_media_menu"),
+            types.InlineKeyboardButton("🔑 Pro Keys", callback_data="admin_keys_menu"),
+            types.InlineKeyboardButton("🧩 Manage Admins", callback_data="admin_manage_admins")
         )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        
+        # Log utilities (view & clear) owner-only
+        markup.add(
+            types.InlineKeyboardButton("📄 View Log Tail", callback_data="admin_view_log"),
+            types.InlineKeyboardButton("🧹 Clear Logs", callback_data="admin_clear_logs_confirm")
+        )
+        # Maintenance submenu
+        markup.add(types.InlineKeyboardButton("🛠️ Maintenance", callback_data="admin_maintenance_menu"))
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
 
-    # ===== USER DASHBOARD FUNCTIONALITY =====
+    # --- Maintenance Menu ---
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_maintenance_menu")
+    def admin_maintenance_menu(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True); return
+        text = (
+            "🛠️ <b>Maintenance Utilities</b>\n\n"
+            "Danger zone actions for testing / reset.\n"
+            "<b>Actions:</b>\n"
+            "• Wipe only pending payments (PENDING_*)\n"
+            "• Reset ALL wallet balances to 0\n"
+            "• Delete ALL orders (irreversible)\n"
+            "• Full payment reset (orders + enhanced tables)\n"
+            "• Clear logs (existing option)\n\n"
+            "<i>Use carefully. These cannot be undone.</i>"
+        )
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("🧹 Wipe Pending Payments", callback_data="maint_wipe_pending_confirm"),
+            types.InlineKeyboardButton("💣 Delete ALL Orders", callback_data="maint_delete_orders_confirm"),
+            types.InlineKeyboardButton("💼 Reset ALL Balances", callback_data="maint_reset_balances_confirm"),
+            types.InlineKeyboardButton("♻️ Full Payment Reset", callback_data="maint_full_payment_reset_confirm"),
+            types.InlineKeyboardButton("🧹 Clear Logs", callback_data="admin_clear_logs_confirm"),
+            types.InlineKeyboardButton("⬅️ Back to Settings", callback_data="admin_settings_menu")
+        )
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    def _confirm_action(call, action_key, description):
+        text = f"⚠️ <b>Confirm Action</b>\n\n{description}\n\nAre you sure?"
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✅ Yes", callback_data=f"maint_exec_{action_key}"),
+            types.InlineKeyboardButton("❌ Cancel", callback_data="admin_maintenance_menu")
+        )
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
+    @bot.callback_query_handler(func=lambda call: call.data.endswith("_confirm") and call.data.startswith("maint_"))
+    def maint_confirm_router(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True); return
+        mapping = {
+            "maint_wipe_pending_confirm": ("wipe_pending", "This will delete all orders in statuses PENDING_PAYMENT / PENDING_APPROVAL."),
+            "maint_delete_orders_confirm": ("delete_orders", "This will DELETE every row in orders table."),
+            "maint_reset_balances_confirm": ("reset_balances", "This will set every user's wallet balance to 0.0."),
+            "maint_full_payment_reset_confirm": ("full_payment_reset", "This will delete orders + enhanced payment tracking tables + payment communications.")
+        }
+        key = call.data
+        if key in mapping:
+            action_key, desc = mapping[key]
+            _confirm_action(call, action_key, desc)
+        else:
+            bot.answer_callback_query(call.id, "Unknown action", show_alert=True)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("maint_exec_"))
+    def maint_execute(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True); return
+        action = call.data.replace("maint_exec_", "")
+        result_msg = ""
+        try:
+            with sqlite3.connect(DB_NAME) as conn:
+                c = conn.cursor()
+                if action == "wipe_pending":
+                    c.execute("DELETE FROM orders WHERE payment_status IN ('PENDING_PAYMENT','PENDING_APPROVAL')")
+                    affected = c.rowcount; conn.commit()
+                    result_msg = f"Deleted {affected} pending orders."
+                elif action == "delete_orders":
+                    c.execute("DELETE FROM orders"); affected = c.rowcount; conn.commit()
+                    result_msg = f"Deleted ALL orders ({affected})."
+                elif action == "reset_balances":
+                    c.execute("UPDATE users SET balance_usd = 0.0"); affected = c.rowcount; conn.commit()
+                    result_msg = f"Reset balances for {affected} users."
+                elif action == "full_payment_reset":
+                    c.execute("DELETE FROM payment_communications")
+                    c.execute("DELETE FROM enhanced_payments")
+                    c.execute("DELETE FROM orders")
+                    conn.commit()
+                    result_msg = "Cleared orders + enhanced payment tracking tables."
+                else:
+                    bot.answer_callback_query(call.id, "Unknown exec", show_alert=True); return
+        except Exception as e:
+            result_msg = f"Error: {e}"
+        # Show result and return to maintenance menu
+        try:
+            bot.answer_callback_query(call.id, result_msg[:190], show_alert=True)
+        except Exception:
+            pass
+        try:
+            admin_maintenance_menu(call)
+        except Exception:
+            bot.send_message(call.message.chat.id, result_msg)
+
+    # --- Enhanced Payment Support Handlers ---
     
-    @bot.callback_query_handler(func=lambda call: call.data == "user_dashboard")
-    def user_dashboard_callback(call):
-        user_id = call.from_user.id
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_chat_user_"))
+    def admin_chat_user(call):
+        """Admin chat with user functionality"""
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
+            return
         
-        # Import the user stats system
+        user_id = int(call.data.replace("admin_chat_user_", ""))
+        
         try:
-            from user_stats import get_user_dashboard_data, user_stats
-            dashboard_data = get_user_dashboard_data(user_id)
-        except ImportError:
-            bot.answer_callback_query(call.id, "Dashboard system not available", show_alert=True)
-            return
-        except Exception as e:
-            print(f"Error getting dashboard data: {e}")
-            bot.answer_callback_query(call.id, "Error loading dashboard", show_alert=True)
-            return
-        
-        if "error" in dashboard_data:
-            bot.answer_callback_query(call.id, dashboard_data["error"], show_alert=True)
-            return
-        
-        user_info = dashboard_data.get("user_info", {})
-        stats = dashboard_data.get("statistics", {})
+            # Get user info
+            user_info = bot.get_chat(user_id)
+            user_name = f"{user_info.first_name or 'Unknown'} {user_info.last_name or ''}".strip()
+            username = f"@{user_info.username}" if user_info.username else "No username"
+        except:
+            user_name = "Unknown User"
+            username = "No username"
         
         text = (
-            f"📊 <b>Your Dashboard</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 <b>Profile:</b> {user_info.get('username', 'Unknown')}\n"
-            f"💰 <b>Balance:</b> ${user_info.get('total_spent', 0):.2f}\n"
-            f"👥 <b>Referrals:</b> {user_info.get('referrals', 0)}\n"
-            f"🏆 <b>Pro Status:</b> {'Yes' if user_info.get('is_pro') else 'No'}\n\n"
-            f"📈 <b>Activity Statistics:</b>\n"
-            f"🔄 <b>Total Checks:</b> {stats.get('total_checks', 0)}\n"
-            f"✅ <b>Successful:</b> {stats.get('successful_checks', 0)}\n"
-            f"❌ <b>Failed:</b> {stats.get('failed_checks', 0)}\n"
-            f"📊 <b>Success Rate:</b> {stats.get('success_rate', 0)}%\n"
-            f"💳 <b>Credits Spent:</b> {stats.get('total_credits_spent', 0)}\n\n"
-            f"📅 <b>Last Active:</b> {stats.get('last_active', 'Unknown')[:10]}"
+            f"💬 <b>Admin Chat with User</b>\n\n"
+            f"👤 <b>User:</b> {user_name} ({username})\n"
+            f"🆔 <b>User ID:</b> <code>{user_id}</code>\n\n"
+            f"Choose an action to communicate with this user:"
         )
         
-        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("📅 Weekly Report", callback_data="dashboard_weekly"),
-            types.InlineKeyboardButton("🏆 Leaderboard", callback_data="dashboard_leaderboard")
+            types.InlineKeyboardButton("📤 Send Message", callback_data=f"admin_send_msg_{user_id}"),
+            types.InlineKeyboardButton("📋 View User Orders", callback_data=f"admin_user_orders_{user_id}"),
+            types.InlineKeyboardButton("💰 View User Balance", callback_data=f"admin_user_balance_{user_id}"),
+            types.InlineKeyboardButton("🔔 Send Notification", callback_data=f"admin_notify_user_{user_id}"),
+            types.InlineKeyboardButton("⬅️ Back", callback_data="admin_payments_menu")
         )
-        markup.add(
-            types.InlineKeyboardButton("📊 Advanced Stats", callback_data="dashboard_advanced"),
-            types.InlineKeyboardButton("🔄 Refresh", callback_data="user_dashboard")
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
         
-        safe_edit_message(bot, call.message.chat.id, call.message.message_id, text, reply_markup=markup, parse_mode="HTML")
-        bot.answer_callback_query(call.id, "Dashboard refreshed! ✅")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "dashboard_weekly")
-    def dashboard_weekly_report(call):
-        user_id = call.from_user.id
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                             reply_markup=markup, parse_mode="HTML")
+    
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_payment_menu_"))
+    def admin_payment_menu(call):
+        """Admin payment management menu for specific payment"""
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
+            return
         
+        payment_id = call.data.replace("admin_payment_menu_", "")
+        
+        # Get payment details from database
         try:
-            from user_stats import get_user_dashboard_data
-            dashboard_data = get_user_dashboard_data(user_id)
-        except ImportError:
-            bot.answer_callback_query(call.id, "Dashboard system not available", show_alert=True)
-            return
-        
-        weekly_stats = dashboard_data.get("weekly_stats", [])
-        
-        text = (
-            f"📅 <b>Weekly Activity Report</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        )
-        
-        if weekly_stats:
-            total_week_checks = sum(day['total_checks'] for day in weekly_stats)
-            total_week_successes = sum(day['successes'] for day in weekly_stats)
-            avg_success_rate = (total_week_successes / total_week_checks * 100) if total_week_checks > 0 else 0
-            
-            text += f"📊 <b>Weekly Summary:</b>\n"
-            text += f"🔄 <b>Total Checks:</b> {total_week_checks}\n"
-            text += f"✅ <b>Successes:</b> {total_week_successes}\n"
-            text += f"📈 <b>Success Rate:</b> {avg_success_rate:.1f}%\n\n"
-            text += f"📈 <b>Daily Breakdown:</b>\n"
-            
-            for day_data in weekly_stats[-7:]:  # Last 7 days
-                date = day_data['date']
-                checks = day_data['total_checks']
-                successes = day_data['successes']
-                rate = day_data['success_rate']
-                text += f"📅 {date}: {checks} checks, {successes} success ({rate}%)\n"
-        else:
-            text += "No activity data available for this week."
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Dashboard", callback_data="user_dashboard"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "dashboard_leaderboard")
-    def dashboard_leaderboard(call):
-        try:
-            from user_stats import user_stats
-            leaderboard = user_stats.get_leaderboard(10)
-        except ImportError:
-            bot.answer_callback_query(call.id, "Leaderboard system not available", show_alert=True)
-            return
-        except Exception as e:
-            print(f"Error getting leaderboard: {e}")
-            bot.answer_callback_query(call.id, "Error loading leaderboard", show_alert=True)
-            return
-        
-        text = (
-            f"🏆 <b>Top Users Leaderboard</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"<b>🎯 Based on successful checks:</b>\n\n"
-        )
-        
-        user_id = call.from_user.id
-        user_rank = None
-        
-        if leaderboard:
-            for entry in leaderboard:
-                rank = entry['rank']
-                username = entry['username']
-                successes = entry['successful_checks']
-                success_rate = entry['success_rate']
-                referrals = entry['referrals']
-                
-                if entry['user_id'] == user_id:
-                    user_rank = rank
-                    text += f"👑 <b>{rank}. {username}</b> - {successes} ✅ ({success_rate}%) | {referrals} refs\n"
-                else:
-                    text += f"🏅 {rank}. {username} - {successes} ✅ ({success_rate}%) | {referrals} refs\n"
-            
-            if user_rank:
-                text += f"\n🎊 <b>Your Rank:</b> #{user_rank}"
-            else:
-                text += f"\n💡 <b>Your Rank:</b> Not in top 10 yet"
-        else:
-            text += "No leaderboard data available yet."
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔄 Refresh", callback_data="dashboard_leaderboard"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Dashboard", callback_data="user_dashboard"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "dashboard_advanced")
-    def dashboard_advanced_stats(call):
-        user_id = call.from_user.id
-        
-        try:
-            from user_stats import get_user_dashboard_data
-            dashboard_data = get_user_dashboard_data(user_id)
-        except ImportError:
-            bot.answer_callback_query(call.id, "Dashboard system not available", show_alert=True)
-            return
-        
-        stats = dashboard_data.get("statistics", {})
-        recent_activity = dashboard_data.get("recent_activity", [])
-        
-        text = (
-            f"📊 <b>Advanced Statistics</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"📈 <b>Performance Metrics:</b>\n"
-            f"🎯 <b>Success Rate:</b> {stats.get('success_rate', 0)}%\n"
-            f"📊 <b>Total Checks:</b> {stats.get('total_checks', 0)}\n"
-            f"✅ <b>Successful:</b> {stats.get('successful_checks', 0)}\n"
-            f"❌ <b>Failed:</b> {stats.get('failed_checks', 0)}\n"
-            f"💳 <b>Credits Spent:</b> {stats.get('total_credits_spent', 0)}\n"
-            f"💰 <b>Money Spent:</b> ${stats.get('total_money_spent', 0):.2f}\n"
-            f"📅 <b>Member Since:</b> {stats.get('join_date', 'Unknown')[:10]}\n"
-            f"⚡ <b>Avg Daily Usage:</b> {stats.get('avg_daily_usage', 0):.1f}\n\n"
-            f"🕒 <b>Recent Activity:</b>\n"
-        )
-        
-        if recent_activity:
-            for activity in recent_activity[:5]:  # Show last 5 activities
-                activity_type = activity['activity']
-                success = "✅" if activity['success'] else "❌"
-                credits = activity['credits']
-                timestamp = activity['timestamp'][:10]
-                text += f"{success} {activity_type} ({credits} credits) - {timestamp}\n"
-        else:
-            text += "No recent activity found."
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Dashboard", callback_data="user_dashboard"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "owner_bot_stats")
-    def owner_bot_stats(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Only the owner can access this panel.", show_alert=True)
-            return
-        with sqlite3.connect(DB_NAME) as conn:
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM users")
-            user_count = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM users WHERE COALESCE(is_active,1)=1")
-            active_count = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM orders")
-            order_count = c.fetchone()[0]
-        text = f"<b>📈 Bot Stats</b>\n\n👥 Users: <b>{user_count}</b>\n✅ Active: <b>{active_count}</b>\n📦 Orders: <b>{order_count}</b>"
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Owner Panel", callback_data="owner_panel"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    # =============================
-    # ===== BROADCAST SYSTEM ======
-    # =============================
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
-    def admin_broadcast_prompt(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-            return
-        
-        user_states[call.from_user.id] = "awaiting_broadcast_message"
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Cancel", callback_data="admin_panel"))
-        bot.edit_message_text(
-            "<b>📢 Broadcast Mode</b>\n\nPlease send or forward the message you want to broadcast to all users.\n\nIt can be text, an image with a caption, a video, or any other message type.",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=markup,
-            parse_mode="HTML"
-        )
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_broadcast_message", content_types=['text', 'photo', 'video', 'document', 'audio', 'sticker', 'voice'])
-    def admin_broadcast_confirm(message):
-        # Store the message to be broadcast
-        user_states[message.from_user.id] = {
-            "broadcast_chat_id": message.chat.id,
-            "broadcast_message_id": message.message_id
-        }
-
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(user_id) FROM users")
-            user_count = cursor.fetchone()[0]
-
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("✅ Yes, Send Now", callback_data="broadcast_confirm_yes"),
-            types.InlineKeyboardButton("❌ No, Cancel", callback_data="broadcast_confirm_no")
-        )
-        bot.send_message(
-            message.chat.id,
-            f"Your message is ready to be sent to <b>{user_count}</b> users. Are you sure you want to proceed?",
-            reply_markup=markup,
-            parse_mode="HTML"
-        )
-
-    @bot.callback_query_handler(func=lambda call: call.data == "broadcast_confirm_no")
-    def admin_broadcast_cancel(call):
-        del user_states[call.from_user.id]
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_message(call.message.chat.id, "Broadcast cancelled.")
-        admin_panel_callback(call) # Show admin panel again
-
-    def do_broadcast(admin_id, broadcast_chat_id, broadcast_message_id):
-        """The actual broadcasting logic, run in a separate thread."""
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM users WHERE COALESCE(is_active,1)=1")
-            all_users = cursor.fetchall()
-        
-        success_count = 0
-        fail_count = 0
-        
-        bot.send_message(admin_id, f"🚀 Starting broadcast to {len(all_users)} users. This may take a while...")
-
-        for user in all_users:
-            user_id = user[0]
-            try:
-                bot.copy_message(chat_id=user_id, from_chat_id=broadcast_chat_id, message_id=broadcast_message_id)
-                success_count += 1
-            except Exception as e:
-                err = str(e)
-                print(f"Broadcast error to user {user_id}: {err}")
-                # Deactivate unreachable users to avoid future errors
-                if any(x in err for x in [
-                    "bot was blocked by the user",
-                    "chat not found",
-                    "bot can't initiate conversation",
-                    "user is deactivated"
-                ]):
-                    try:
-                        with sqlite3.connect(DB_NAME) as conn2:
-                            c2 = conn2.cursor()
-                            c2.execute("UPDATE users SET is_active = 0 WHERE user_id = ?", (user_id,))
-                            conn2.commit()
-                    except Exception:
-                        pass
-                fail_count += 1
-            time.sleep(0.1) # Sleep for 100ms between messages to avoid hitting API rate limits
-
-        summary_text = f"""🏁 **Broadcast Complete!**
-
-✅ **Successfully sent to:** `{success_count}` users
-❌ **Failed to send to:** `{fail_count}` users (likely blocked the bot)
-"""
-        bot.send_message(admin_id, summary_text, parse_mode="Markdown")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "broadcast_confirm_yes")
-    def admin_broadcast_start(call):
-        admin_id = call.from_user.id
-        state = user_states.get(admin_id)
-
-        if not isinstance(state, dict) or "broadcast_message_id" not in state:
-            bot.answer_callback_query(call.id, "Error: Broadcast message not found. Please start over.", show_alert=True)
-            return
-
-        broadcast_chat_id = state["broadcast_chat_id"]
-        broadcast_message_id = state["broadcast_message_id"]
-        
-        del user_states[admin_id]
-        bot.edit_message_text("Broadcast is starting... You will receive a summary when it's complete.", call.message.chat.id, call.message.message_id)
-
-        # Run the broadcast in a background thread to not block the bot
-        broadcast_thread = threading.Thread(target=do_broadcast, args=(admin_id, broadcast_chat_id, broadcast_message_id))
-        broadcast_thread.start()
-
-    # =============================
-    # ===== REFERRAL GIVEAWAYS =====
-    # =============================
-
-    # =============================
-    # ===== GIF MANAGEMENT ========
-    # =============================
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_manage_gifs")
-    def admin_manage_gifs(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-            return
-        counts = get_media_pool_counts()
-        text = ("<b>🖼️ GIF Manager</b>\n\n"
-                f"welcome: <b>{counts.get('welcome', 0)}</b>\n"
-                f"success: <b>{counts.get('success', 0)}</b>\n"
-                f"reject: <b>{counts.get('reject', 0)}</b>\n"
-                f"pending: <b>{counts.get('pending', 0)}</b>\n"
-                f"any: <b>{counts.get('any', 0)}</b>\n\n"
-                "Send a GIF with one of these captions to add: <code>/addgif welcome</code>, <code>/addgif success</code>, <code>/addgif reject</code>, <code>/addgif pending</code>.\n"
-                "Or use the buttons below.")
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("➕ Add to Welcome", callback_data="gif_add_welcome"),
-            types.InlineKeyboardButton("➕ Add to Success", callback_data="gif_add_success"),
-            types.InlineKeyboardButton("➕ Add to Reject", callback_data="gif_add_reject"),
-            types.InlineKeyboardButton("➕ Add to Pending", callback_data="gif_add_pending"),
-        )
-        markup.add(
-            types.InlineKeyboardButton("📥 Bulk Add Welcome", callback_data="gif_add_bulk_welcome"),
-            types.InlineKeyboardButton("📥 Bulk Add Success", callback_data="gif_add_bulk_success"),
-            types.InlineKeyboardButton("📥 Bulk Add Reject", callback_data="gif_add_bulk_reject"),
-            types.InlineKeyboardButton("📥 Bulk Add Pending", callback_data="gif_add_bulk_pending"),
-        )
-        markup.add(
-            types.InlineKeyboardButton("📊 Refresh Counts", callback_data="admin_manage_gifs"),
-            types.InlineKeyboardButton("🧹 Clear All", callback_data="gif_clear_all"),
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    # State for expecting a GIF to add
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("gif_add_"))
-    def admin_gif_add_prompt(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-            return
-        parts = call.data.split('_')
-        if len(parts) >= 3 and parts[2] == 'bulk':
-            kind = parts[-1]
-            user_states[call.from_user.id] = f"awaiting_gif_bulk_{kind}"
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🛑 Stop Bulk", callback_data="gif_bulk_stop"))
-            bot.edit_message_text(
-                f"📥 <b>Bulk Add Mode</b> for <b>{kind}</b>\n\nSend GIFs one by one (forward or upload). They will be saved automatically.\nWhen finished, press ‘Stop Bulk’.",
-                call.message.chat.id,
-                call.message.message_id,
-                reply_markup=markup,
-                parse_mode="HTML",
-            )
-        else:
-            kind = parts[-1]
-            user_states[call.from_user.id] = f"awaiting_gif_{kind}"
-            bot.edit_message_text(f"Send an animated GIF now to add to <b>{kind}</b> pool.", call.message.chat.id, call.message.message_id, parse_mode="HTML")
-
-    def _is_waiting_gif_state(uid):
-        st = str(user_states.get(uid, ''))
-        return st.startswith("awaiting_gif_") or st.startswith("awaiting_gif_bulk_")
-
-    @bot.message_handler(func=lambda m: _is_waiting_gif_state(m.from_user.id), content_types=['animation'])
-    def admin_gif_add_receive(message):
-        if message.from_user.id != ADMIN_ID:
-            return
-        state = str(user_states.get(message.from_user.id, ''))
-        is_bulk = state.startswith("awaiting_gif_bulk_")
-        kind = state.replace("awaiting_gif_bulk_", "").replace("awaiting_gif_", "")
-        file_id = message.animation.file_id
-        try:
-            count = add_gif_to_pool(kind, file_id)
-            if is_bulk:
-                bot.reply_to(message, f"✅ Added to '{kind}' pool. Total: {count}\n(Bulk mode: keep sending, or press Stop)")
-            else:
-                bot.reply_to(message, f"✅ Added to '{kind}' pool. Total: {count}")
-        except Exception as e:
-            bot.reply_to(message, f"❌ Could not add GIF: {e}")
-        finally:
-            if not is_bulk:
-                try:
-                    del user_states[message.from_user.id]
-                except Exception:
-                    pass
-
-    @bot.callback_query_handler(func=lambda call: call.data == "gif_bulk_stop")
-    def admin_gif_bulk_stop(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-            return
-        try:
-            if call.from_user.id in user_states:
-                del user_states[call.from_user.id]
-        except Exception:
-            pass
-        bot.answer_callback_query(call.id, "Bulk add stopped.", show_alert=True)
-        admin_manage_gifs(call)
-
-    @bot.callback_query_handler(func=lambda call: call.data == "gif_clear_all")
-    def admin_gif_clear_all(call):
-        if call.from_user.id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-            return
-        counts = clear_media_pool("all")
-        bot.answer_callback_query(call.id, "🧹 Cleared all GIF pools.", show_alert=True)
-        admin_manage_gifs(call)
-
-    def format_user_line(u):
-        uid, uname, ref_count, join_date = u
-        uname_disp = uname if uname else "-"
-        return f"<code>{uid}</code> | {uname_disp} | <b>{ref_count}</b> | <code>{join_date[:10]}</code>"
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_top_referrers" or call.data.startswith("admin_top_referrers_page_"))
-    def admin_top_referrers(call):
-        if call.from_user.id != ADMIN_ID:
-            # Allow global admins as well
             with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        import math
-        page = 0
-        if call.data.startswith("admin_top_referrers_page_"):
-            page = int(call.data.split('_')[-1])
-        page_size = 10
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM users WHERE referral_count > 0")
-            count = cursor.fetchone()[0]
-            cursor.execute("SELECT user_id, username, referral_count, join_date FROM users WHERE referral_count > 0 ORDER BY referral_count DESC, join_date ASC LIMIT ? OFFSET ?", (page_size, page*page_size))
-            rows = cursor.fetchall()
-        total_pages = max(1, math.ceil(count / page_size))
-        text = f"<b>🏆 Top Referrers (Page {page+1}/{total_pages})</b>\nTotal with >=1 referral: <b>{count}</b>\n\n<b>ID</b> | <b>Username</b> | <b>Refs</b> | <b>Joined</b> | <b>⭐</b>\n" + ("-"*46) + "\n"
-        if not rows:
-            text += "No users with successful referrals yet."
-        else:
-            for u in rows:
-                text += format_user_line(u) + "\n"
-        markup = types.InlineKeyboardMarkup()
-        nav = []
-        if page > 0:
-            nav.append(types.InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_top_referrers_page_{page-1}"))
-        if page < total_pages-1:
-            nav.append(types.InlineKeyboardButton("Next ➡️", callback_data=f"admin_top_referrers_page_{page+1}"))
-        if nav:
-            markup.row(*nav)
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_giveaway")
-    def admin_giveaway_menu(call):
-        # Owner or global admin only
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        # Show top 20 with actions to select as winner
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id, username, referral_count, join_date FROM users WHERE referral_count > 0 ORDER BY referral_count DESC, join_date ASC LIMIT 20")
-            rows = cursor.fetchall()
-        text = "<b>🎁 Giveaway</b>\n\nPick a winner from recent top referrers (last 20 shown).\nEach referral = one ⭐ in weighted random.\n\n<b>ID</b> | <b>User</b> | <b>Refs</b> | <b>Joined</b> | <b>⭐</b>\n" + ("-"*46) + "\n"
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        if not rows:
-            text += "No eligible users (referrals >= 1) yet."
-        else:
-            for u in rows:
-                uid, uname, ref_count, join_date = u
-                stars = "⭐" * min(ref_count, 20)
-                if ref_count > 20:
-                    stars += f" x{ref_count}"
-                text += format_user_line(u) + f" | {stars}\n"
-                markup.add(types.InlineKeyboardButton(f"Select {u[0]}", callback_data=f"admin_giveaway_select_{u[0]}"))
-        markup.add(types.InlineKeyboardButton("🎲 Weighted Random Winner", callback_data="admin_giveaway_weighted"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_giveaway_select_"))
-    def admin_giveaway_select(call):
-        # Permission check
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        try:
-            uid = int(call.data.split('_')[-1])
-        except Exception:
-            bot.answer_callback_query(call.id, "Invalid selection.", show_alert=True)
-            return
-        # Persist winner to DB and notify
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO giveaway_winners (user_id, selected_by) VALUES (?, ?)", (uid, call.from_user.id))
-            conn.commit()
-            cursor.execute("SELECT username FROM users WHERE user_id = ?", (uid,))
-            row = cursor.fetchone()
-            uname = row[0] if row else None
-        
-        bot.answer_callback_query(call.id, "🎉 Winner recorded!", show_alert=True)
-        winner_name = f"@{uname}" if uname else f"User {uid}"
-        try:
-            bot.send_message(uid, "🎉 Congratulations! You have been selected as a giveaway winner. The team will contact you with your reward.")
-        except Exception:
-            pass
-        bot.edit_message_text(f"🎁 <b>Giveaway Winner Selected:</b> {winner_name} (<code>{uid}</code>)", call.message.chat.id, call.message.message_id, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_giveaway_weighted")
-    def admin_giveaway_weighted(call):
-        # Permission check
-        if call.from_user.id != ADMIN_ID:
-            with sqlite3.connect(DB_NAME) as conn:
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admins WHERE user_id = ?", (call.from_user.id,))
-                if c.fetchone() is None:
-                    bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
-                    return
-        # Build weighted population
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id, username, referral_count FROM users WHERE referral_count > 0")
-            rows = cursor.fetchall()
-        if not rows:
-            bot.answer_callback_query(call.id, "No eligible users.", show_alert=True)
-            return
-        population = [r[0] for r in rows]
-        weights = [max(0, r[2]) for r in rows]
-        try:
-            winner_id = random.choices(population, weights=weights, k=1)[0]
-        except Exception as e:
-            bot.answer_callback_query(call.id, f"Failed to pick: {e}", show_alert=True)
-            return
-        # Persist and notify
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO giveaway_winners (user_id, selected_by) VALUES (?, ?)", (winner_id, call.from_user.id))
-            conn.commit()
-            cursor.execute("SELECT username FROM users WHERE user_id = ?", (winner_id,))
-            row = cursor.fetchone()
-            uname = row[0] if row else None
-        try:
-            bot.send_message(winner_id, "🎉 Congratulations! You have been selected as a giveaway winner by weighted random. The team will contact you with your reward.")
-        except Exception:
-            pass
-        winner_name = f"@{uname}" if uname else f"User {winner_id}"
-        bot.edit_message_text(f"🎁 <b>Weighted Random Winner:</b> {winner_name} (<code>{winner_id}</code>)", call.message.chat.id, call.message.message_id, parse_mode="HTML")
-
-    # Section-based Manage Orders for section admins
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_orders_"))
-    def admin_section_orders_callback(call):
-        user_id = call.from_user.id
-        section = call.data.replace("admin_orders_", "")
-        # Check if user is section admin for this section
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM section_admins WHERE user_id = ? AND section = ?", (user_id, section))
-            if not cursor.fetchone():
-                bot.answer_callback_query(call.id, "❌ Access Denied! You are not an admin for this section.", show_alert=True)
-                return
-            cursor.execute("SELECT order_id, user_id, item_name, price_usd, payment_status, creation_date FROM orders WHERE item_name LIKE ? ORDER BY creation_date DESC LIMIT 20", (f"%{section}%",))
-            orders = cursor.fetchall()
-        if not orders:
-            text = f"📦 **Recent {section.title()} Orders**\n\nThere are no orders for this section yet."
-        else:
-            text = f"📦 **Last 20 {section.title()} Orders**\n\n<code>Order ID | User ID | Item | Price | Status | Date</code>\n" + "-"*40 + "\n"
-            for o in orders:
-                text += f"<code>{o[0]}</code> | <code>{o[1]}</code> | <code>{o[2]}</code> | <code>${o[3]}</code> | <code>{o[4]}</code> | <code>{o[5][:10]}</code>\n"
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_user_lookup")
-    def admin_user_lookup_prompt(call):
-        user_states[call.from_user.id] = "awaiting_user_lookup_id"
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
-        bot.edit_message_text("Please send the <b>User ID</b> of the user you want to look up.", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_user_lookup_id")
-    def admin_user_lookup(message):
-        user_id = message.text.strip()
-        try:
-            user_id_int = int(user_id)
-        except ValueError:
-            bot.send_message(message.chat.id, "❌ Invalid User ID. Please send a numeric User ID.")
-            return
-        user = get_user_details(user_id_int)
-        if not user:
-            bot.send_message(message.chat.id, f"❌ No user found with ID {user_id}.")
-            return
-        # Fetch purchase/payment history
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT order_id, item_name, price_usd, payment_status, creation_date FROM orders WHERE user_id = ? ORDER BY creation_date DESC", (user_id_int,))
-            orders = cursor.fetchall()
-        text = f"<b>👤 User Details</b>\n<b>User ID:</b> <code>{user['user_id']}</code>\n<b>Username:</b> {user['username']}\n<b>Referrals:</b> {user['referral_count']}\n\n<b>Purchase/Payment History:</b>\n"
-        if not orders:
-            text += "No purchases found."
-        else:
-            for o in orders:
-                text += f"\n<b>Order:</b> <code>{o[0]}</code> | <b>Item:</b> {o[1]} | <b>Price:</b> ${o[2]} | <b>Status:</b> {o[3]} | <b>Date:</b> {o[4]}"
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-        del user_states[message.from_user.id]
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_manage_products")
-    def manage_products_callback(call):
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        # Show consolidated Hacks management (Methods + Phishing Kits)
-        markup.add(types.InlineKeyboardButton("🔧 Manage Hacks (Methods, Phishing)", callback_data="admin_manage_hacks"))
-        # Show other top-level categories
-        for key, name in CATEGORY_NAMES.items():
-            if key in {"methods", "phishing_kits"}:
-                continue
-            markup.add(types.InlineKeyboardButton(f"🔧 Manage {name}", callback_data=f"admin_cat_menu_{key}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back to Products Menu", callback_data="admin_products_menu"))
-        bot.edit_message_text("�️ <b>Manage Products by Category</b>\n\nChoose a category to add, remove, or modify products:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_manage_hacks")
-    def admin_manage_hacks(call):
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("🧰 Manage Methods", callback_data="admin_cat_menu_methods"))
-        markup.add(types.InlineKeyboardButton("🎣 Manage Phishing Kits", callback_data="admin_cat_menu_phishing_kits"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_manage_products"))
-        bot.edit_message_text("<b>🔧 Manage Hacks</b>\n\nPick what to manage:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    def show_cc_add_wizard(call, category):
-        """Enhanced CC product addition wizard with proper format"""
-        category_name = "Ready Credit Cards" if category == "ready_ccs" else "BIN Numbers"
-        
-        if category == "ready_ccs":
-            text = (
-                f"💳 <b>Add {category_name}</b>\n\n"
-                f"Choose how you want to add the CC product:\n\n"
-                f"🎯 <b>Quick Add:</b> Basic CC with name and price\n"
-                f"💎 <b>Full Details:</b> Complete CC with all info\n"
-                f"🔢 <b>Bulk Add:</b> Multiple CCs at once"
-            )
-        else:  # bins
-            text = (
-                f"🏦 <b>Add {category_name}</b>\n\n"
-                f"Choose how you want to add the BIN:\n\n"
-                f"🎯 <b>Quick Add:</b> Basic BIN with name and price\n"
-                f"💎 <b>Full Details:</b> Complete BIN with bank info\n"
-                f"🔢 <b>Bulk Add:</b> Multiple BINs at once"
-            )
-            
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("🎯 Quick Add", callback_data=f"cc_quick_{category}"),
-            types.InlineKeyboardButton("💎 Full Details", callback_data=f"cc_full_{category}"),
-            types.InlineKeyboardButton("🔢 Bulk Add", callback_data=f"cc_bulk_{category}")
-        )
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    # CC Quick Add Handlers
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("cc_quick_"))
-    def cc_quick_add(call):
-        category = call.data.split('_')[2]
-        user_states[call.from_user.id] = f"cc_quick_name_{category}"
-        
-        if category == "ready_ccs":
-            text = (
-                "💳 <b>Quick Add - Ready CC</b>\n\n"
-                "Enter the <b>CC name/title</b>:\n\n"
-                "<i>Examples:</i>\n"
-                "• CC for Netflix\n"
-                "• High Balance Visa\n"
-                "• Amazon Working CC\n"
-                "• PayPal Verified CC"
-            )
-        else:
-            text = (
-                "🏦 <b>Quick Add - BIN</b>\n\n"
-                "Enter the <b>BIN name/title</b>:\n\n"
-                "<i>Examples:</i>\n"
-                "• Netflix BIN\n"
-                "• USA Chase Bank BIN\n"
-                "• UK Visa BIN\n"
-                "• Premium MasterCard BIN"
-            )
-            
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_quick_name_"))
-    def handle_cc_quick_name(message):
-        state = user_states[message.from_user.id]
-        category = state.split('_')[3]
-        
-        cc_name = message.text.strip()
-        if len(cc_name) < 3:
-            bot.reply_to(message, "❌ Name too short. Please enter at least 3 characters.")
-            return
-            
-        # Store the name and ask for price
-        user_states[message.from_user.id] = f"cc_quick_price_{category}_{cc_name}"
-        
-        text = (
-            f"💰 <b>Price for: {cc_name}</b>\n\n"
-            f"Enter the price in USD (numbers only):\n\n"
-            f"<i>Examples:</i> 25, 50, 100"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_quick_price_"))
-    def handle_cc_quick_price(message):
-        state = user_states[message.from_user.id]
-        parts = state.split('_', 4)
-        category = parts[3]
-        cc_name = parts[4]
-        
-        try:
-            price = int(message.text.strip())
-            if price <= 0:
-                raise ValueError()
-        except ValueError:
-            bot.reply_to(message, "❌ Invalid price. Please enter a positive number (e.g., 25, 50, 100)")
-            return
-            
-        # Ask for description
-        user_states[message.from_user.id] = f"cc_quick_desc_{category}_{cc_name}_{price}"
-        
-        text = (
-            f"📝 <b>Description for: {cc_name}</b>\n\n"
-            f"Enter a short description:\n\n"
-            f"<i>Examples:</i>\n"
-            f"• Working for streaming services\n"
-            f"• High balance, verified\n"
-            f"• Good for online shopping\n"
-            f"• Premium account compatible"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_quick_desc_"))
-    def handle_cc_quick_desc(message):
-        state = user_states[message.from_user.id]
-        parts = state.split('_', 5)
-        category = parts[3]
-        cc_name = parts[4]
-        price = int(parts[5])
-        
-        description = message.text.strip()
-        
-        # Create the product object
-        if category == "ready_ccs":
-            new_item = {
-                "name": cc_name,
-                "price": price,
-                "description": description,
-                "delivery_type": "generate",
-                "card_type": "ready_cc",
-                "status": "active"
-            }
-        else:  # bins
-            new_item = {
-                "name": cc_name,
-                "price": price,
-                "description": description,
-                "bin": "XXXXXXXXXXXX",
-                "status": "WORKING",
-                "country": "Unknown",
-                "info": "Credit Card",
-                "bank": "Unknown"
-            }
-            
-        # Add to products
-        products = get_products_from_cache()
-        if category not in products:
-            products[category] = []
-        products[category].append(new_item)
-        
-        # Save products
-        save_products_to_file_and_reload(products)
-        
-        # Clear state
-        del user_states[message.from_user.id]
-        
-        # Confirmation
-        text = (
-            f"✅ <b>Product Added Successfully!</b>\n\n"
-            f"<b>Category:</b> {CATEGORY_NAMES.get(category, category)}\n"
-            f"<b>Name:</b> {cc_name}\n"
-            f"<b>Price:</b> ${price}\n"
-            f"<b>Description:</b> {description}\n\n"
-            f"The product is now available in the shop!"
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("➕ Add Another", callback_data=f"cc_quick_{category}"),
-            types.InlineKeyboardButton("🔧 Manage Category", callback_data=f"admin_cat_menu_{category}"),
-            types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu")
-        )
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    # CC Full Details Handlers
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("cc_full_"))
-    def cc_full_add(call):
-        category = call.data.split('_')[2]
-        user_states[call.from_user.id] = f"cc_full_name_{category}"
-        
-        if category == "ready_ccs":
-            text = (
-                "💳 <b>Full Details - Ready CC</b>\n\n"
-                "We'll collect detailed information step by step.\n\n"
-                "<b>Step 1:</b> Enter the CC name/title:\n\n"
-                "<i>Examples:</i>\n"
-                "• Premium Netflix CC\n"
-                "• High Balance Visa USA\n"
-                "• Amazon Prime Working CC\n"
-                "• PayPal Verified MasterCard"
-            )
-        else:
-            text = (
-                "🏦 <b>Full Details - BIN</b>\n\n"
-                "We'll collect detailed information step by step.\n\n"
-                "<b>Step 1:</b> Enter the BIN name/title:\n\n"
-                "<i>Examples:</i>\n"
-                "• Netflix USA BIN\n"
-                "• Chase Bank Premium BIN\n"
-                "• UK Visa Classic BIN\n"
-                "• MasterCard World Elite BIN"
-            )
-            
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    # CC Bulk Add Handlers
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("cc_bulk_"))
-    def cc_bulk_add(call):
-        category = call.data.split('_')[2]
-        user_states[call.from_user.id] = f"cc_bulk_{category}"
-        
-        if category == "ready_ccs":
-            text = (
-                "📦 <b>Bulk Add - Ready CCs</b>\n\n"
-                "Send CC data in this format (one per line):\n\n"
-                "<code>Name|Price|Description</code>\n\n"
-                "<b>Examples:</b>\n"
-                "<code>Netflix CC|25|Working for streaming\n"
-                "Amazon CC|35|High balance verified\n"
-                "PayPal CC|45|Premium account ready</code>\n\n"
-                "You can send multiple lines at once."
-            )
-        else:
-            text = (
-                "📦 <b>Bulk Add - BINs</b>\n\n"
-                "Send BIN data in this format (one per line):\n\n"
-                "<code>Name|BIN|Price|Country|Bank|Description</code>\n\n"
-                "<b>Examples:</b>\n"
-                "<code>Netflix BIN|123456|30|USA|Chase|Works for streaming\n"
-                "Amazon BIN|654321|40|UK|Barclays|Good for shopping</code>\n\n"
-                "You can send multiple lines at once."
-            )
-            
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_bulk_"))
-    def handle_cc_bulk(message):
-        state = user_states[message.from_user.id]
-        category = state.split('_')[2]
-        
-        lines = message.text.strip().split('\n')
-        products = get_products_from_cache()
-        
-        if category not in products:
-            products[category] = []
-            
-        added_count = 0
-        errors = []
-        
-        for i, line in enumerate(lines, 1):
-            line = line.strip()
-            if not line:
-                continue
+                cursor = conn.cursor()
                 
-            try:
-                parts = [p.strip() for p in line.split('|')]
+                # Check both enhanced_payments and orders tables
+                enhanced_data = cursor.execute('''
+                    SELECT ep.user_id, ep.status, ep.created_at, o.item_name, o.price_usd
+                    FROM enhanced_payments ep
+                    LEFT JOIN orders o ON ep.payment_id = o.order_id
+                    WHERE ep.payment_id = ?
+                ''', (payment_id,)).fetchone()
                 
-                if category == "ready_ccs":
-                    if len(parts) < 3:
-                        errors.append(f"Line {i}: Need Name|Price|Description format")
-                        continue
-                        
-                    name, price_str, description = parts[0], parts[1], parts[2]
-                    price = int(price_str)
+                if not enhanced_data:
+                    # Try regular orders table
+                    order_data = cursor.execute('''
+                        SELECT user_id, payment_status, creation_date, item_name, price_usd
+                        FROM orders WHERE order_id = ?
+                    ''', (payment_id,)).fetchone()
                     
-                    new_item = {
-                        "name": name,
-                        "price": price,
-                        "description": description,
-                        "delivery_type": "generate",
-                        "card_type": "ready_cc",
-                        "status": "active"
-                    }
-                    
-                else:  # bins
-                    if len(parts) < 6:
-                        errors.append(f"Line {i}: Need Name|BIN|Price|Country|Bank|Description format")
-                        continue
-                        
-                    name, bin_num, price_str, country, bank, description = parts[:6]
-                    price = int(price_str)
-                    
-                    new_item = {
-                        "name": name,
-                        "price": price,
-                        "description": description,
-                        "bin": bin_num,
-                        "status": "WORKING",
-                        "country": country,
-                        "info": "Credit Card",
-                        "bank": bank
-                    }
-                    
-                products[category].append(new_item)
-                added_count += 1
-                
-            except ValueError:
-                errors.append(f"Line {i}: Invalid price format")
-            except Exception as e:
-                errors.append(f"Line {i}: {str(e)}")
-        
-        # Save products
-        if added_count > 0:
-            save_products_to_file_and_reload(products)
-        
-        # Clear state
-        del user_states[message.from_user.id]
-        
-        # Build response
-        text = f"📊 <b>Bulk Import Results</b>\n\n"
-        text += f"✅ <b>Successfully added:</b> {added_count} items\n"
-        
-        if errors:
-            text += f"❌ <b>Errors:</b> {len(errors)}\n\n"
-            text += "<b>Error details:</b>\n"
-            for error in errors[:5]:  # Show first 5 errors
-                text += f"• {error}\n"
-            if len(errors) > 5:
-                text += f"• ... and {len(errors) - 5} more errors\n"
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("➕ Bulk Add More", callback_data=f"cc_bulk_{category}"),
-            types.InlineKeyboardButton("🔧 Manage Category", callback_data=f"admin_cat_menu_{category}"),
-            types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu")
-        )
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    # Full Details Handlers for CCs
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_full_name_"))
-    def handle_cc_full_name(message):
-        state = user_states[message.from_user.id]
-        category = state.split('_')[3]
-        
-        cc_name = message.text.strip()
-        if len(cc_name) < 3:
-            bot.reply_to(message, "❌ Name too short. Please enter at least 3 characters.")
-            return
-            
-        # Store the name and ask for next field
-        user_states[message.from_user.id] = f"cc_full_price_{category}_{cc_name}"
-        
-        text = (
-            f"💰 <b>Step 2: Price</b>\n\n"
-            f"<b>Product:</b> {cc_name}\n\n"
-            f"Enter the price in USD (numbers only):\n\n"
-            f"<i>Examples:</i> 25, 50, 100, 250"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_full_price_"))
-    def handle_cc_full_price(message):
-        state = user_states[message.from_user.id]
-        parts = state.split('_', 4)
-        category = parts[3]
-        cc_name = parts[4]
-        
-        try:
-            price = int(message.text.strip())
-            if price <= 0:
-                raise ValueError()
-        except ValueError:
-            bot.reply_to(message, "❌ Invalid price. Please enter a positive number (e.g., 25, 50, 100)")
-            return
-            
-        if category == "ready_ccs":
-            # For Ready CCs, ask for description
-            user_states[message.from_user.id] = f"cc_full_desc_{category}_{cc_name}_{price}"
-            
-            text = (
-                f"📝 <b>Step 3: Description</b>\n\n"
-                f"<b>Product:</b> {cc_name}\n"
-                f"<b>Price:</b> ${price}\n\n"
-                f"Enter a detailed description:\n\n"
-                f"<i>Examples:</i>\n"
-                f"• High balance CC, works for Netflix, Amazon\n"
-                f"• Verified PayPal account compatible\n"
-                f"• Premium streaming services ready\n"
-                f"• Good for online shopping and subscriptions"
-            )
-            
-        else:  # bins
-            # For BINs, ask for BIN number
-            user_states[message.from_user.id] = f"cc_full_bin_{category}_{cc_name}_{price}"
-            
-            text = (
-                f"🏦 <b>Step 3: BIN Number</b>\n\n"
-                f"<b>Product:</b> {cc_name}\n"
-                f"<b>Price:</b> ${price}\n\n"
-                f"Enter the BIN number (first 6 digits):\n\n"
-                f"<i>Example:</i> 123456, 456789"
-            )
-            
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_full_desc_"))
-    def handle_cc_full_desc(message):
-        state = user_states[message.from_user.id]
-        parts = state.split('_', 5)
-        category = parts[3]
-        cc_name = parts[4]
-        price = int(parts[5])
-        
-        description = message.text.strip()
-        
-        # Create the Ready CC product
-        new_item = {
-            "name": cc_name,
-            "price": price,
-            "description": description,
-            "delivery_type": "generate",
-            "card_type": "ready_cc",
-            "status": "active"
-        }
-            
-        # Add to products
-        products = get_products_from_cache()
-        if category not in products:
-            products[category] = []
-        products[category].append(new_item)
-        
-        # Save products
-        save_products_to_file_and_reload(products)
-        
-        # Clear state
-        del user_states[message.from_user.id]
-        
-        # Confirmation
-        text = (
-            f"✅ <b>Ready CC Added Successfully!</b>\n\n"
-            f"<b>Name:</b> {cc_name}\n"
-            f"<b>Price:</b> ${price}\n"
-            f"<b>Description:</b> {description}\n\n"
-            f"The product is now available in the shop!"
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("➕ Add Another CC", callback_data=f"cc_full_{category}"),
-            types.InlineKeyboardButton("🔧 Manage Category", callback_data=f"admin_cat_menu_{category}"),
-            types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu")
-        )
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_full_bin_"))
-    def handle_cc_full_bin(message):
-        state = user_states[message.from_user.id]
-        parts = state.split('_', 5)
-        category = parts[3]
-        cc_name = parts[4]
-        price = int(parts[5])
-        
-        bin_num = message.text.strip()
-        if not bin_num.isdigit() or len(bin_num) != 6:
-            bot.reply_to(message, "❌ Invalid BIN format. Please enter exactly 6 digits (e.g., 123456)")
-            return
-            
-        # Ask for country
-        user_states[message.from_user.id] = f"cc_full_country_{category}_{cc_name}_{price}_{bin_num}"
-        
-        text = (
-            f"🌍 <b>Step 4: Country</b>\n\n"
-            f"<b>Product:</b> {cc_name}\n"
-            f"<b>Price:</b> ${price}\n"
-            f"<b>BIN:</b> {bin_num}\n\n"
-            f"Enter the country:\n\n"
-            f"<i>Examples:</i> USA, UK, Canada, Germany, France"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_full_country_"))
-    def handle_cc_full_country(message):
-        state = user_states[message.from_user.id]
-        parts = state.split('_', 6)
-        category = parts[3]
-        cc_name = parts[4]
-        price = int(parts[5])
-        bin_num = parts[6]
-        
-        country = message.text.strip()
-        
-        # Ask for bank
-        user_states[message.from_user.id] = f"cc_full_bank_{category}_{cc_name}_{price}_{bin_num}_{country}"
-        
-        text = (
-            f"🏦 <b>Step 5: Bank Name</b>\n\n"
-            f"<b>Product:</b> {cc_name}\n"
-            f"<b>Price:</b> ${price}\n"
-            f"<b>BIN:</b> {bin_num}\n"
-            f"<b>Country:</b> {country}\n\n"
-            f"Enter the bank name:\n\n"
-            f"<i>Examples:</i> Chase, Wells Fargo, Bank of America, Barclays"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_full_bank_"))
-    def handle_cc_full_bank(message):
-        state = user_states[message.from_user.id]
-        parts = state.split('_', 7)
-        category = parts[3]
-        cc_name = parts[4]
-        price = int(parts[5])
-        bin_num = parts[6]
-        country = parts[7]
-        
-        bank = message.text.strip()
-        
-        # Ask for description
-        user_states[message.from_user.id] = f"cc_full_bindesc_{category}_{cc_name}_{price}_{bin_num}_{country}_{bank}"
-        
-        text = (
-            f"📝 <b>Step 6: Description</b>\n\n"
-            f"<b>Product:</b> {cc_name}\n"
-            f"<b>Price:</b> ${price}\n"
-            f"<b>BIN:</b> {bin_num}\n"
-            f"<b>Country:</b> {country}\n"
-            f"<b>Bank:</b> {bank}\n\n"
-            f"Enter a description:\n\n"
-            f"<i>Examples:</i>\n"
-            f"• Works great for Netflix and streaming\n"
-            f"• High success rate for online shopping\n"
-            f"• Premium BIN with good approval rates"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("cc_full_bindesc_"))
-    def handle_cc_full_bindesc(message):
-        state = user_states[message.from_user.id]
-        parts = state.split('_', 8)
-        category = parts[3]
-        cc_name = parts[4]
-        price = int(parts[5])
-        bin_num = parts[6]
-        country = parts[7]
-        bank = parts[8]
-        
-        description = message.text.strip()
-        
-        # Create the BIN product
-        new_item = {
-            "name": cc_name,
-            "price": price,
-            "description": description,
-            "bin": bin_num,
-            "status": "WORKING",
-            "country": country,
-            "info": "Credit Card",
-            "bank": bank
-        }
-            
-        # Add to products
-        products = get_products_from_cache()
-        if category not in products:
-            products[category] = []
-        products[category].append(new_item)
-        
-        # Save products
-        save_products_to_file_and_reload(products)
-        
-        # Clear state
-        del user_states[message.from_user.id]
-        
-        # Confirmation
-        text = (
-            f"✅ <b>BIN Added Successfully!</b>\n\n"
-            f"<b>Name:</b> {cc_name}\n"
-            f"<b>Price:</b> ${price}\n"
-            f"<b>BIN:</b> {bin_num}\n"
-            f"<b>Country:</b> {country}\n"
-            f"<b>Bank:</b> {bank}\n"
-            f"<b>Description:</b> {description}\n\n"
-            f"The BIN is now available in the shop!"
-        )
-        
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton("➕ Add Another BIN", callback_data=f"cc_full_{category}"),
-            types.InlineKeyboardButton("🔧 Manage Category", callback_data=f"admin_cat_menu_{category}"),
-            types.InlineKeyboardButton("⬅️ Back to Products", callback_data="admin_products_menu")
-        )
-        
-        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="HTML")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_cat_menu_"))
-    def category_menu_callback(call):
-        category = call.data.replace("admin_cat_menu_", "", 1)
-        # Clear any add-item waiting state for this admin when navigating back to category menu
-        try:
-            st = user_states.get(call.from_user.id)
-            if isinstance(st, str) and st.startswith("awaiting_json_"):
-                user_states.pop(call.from_user.id, None)
-        except Exception:
-            pass
-        category_name = CATEGORY_NAMES.get(category, "Items")
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("➕ Add Item", callback_data=f"admin_add_{category}"),
-            types.InlineKeyboardButton("➖ Remove Item", callback_data=f"admin_remove_list_{category}")
-        )
-        if category in {"methods", "method_bins", "other", "dumps", "rdp", "phishing_kits"}:
-            markup.add(types.InlineKeyboardButton("🧭 Add via Wizard", callback_data=f"admin_addwiz_{category}"))
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_manage_products"))
-        bot.edit_message_text(f"🔧 **Manage {category_name}**\n\nWhat would you like to do?", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_add_"))
-    def add_item_callback(call):
-        category = call.data.replace("admin_add_", "", 1)
-        
-        # Special handling for CC categories with enhanced format
-        if category in ["ready_ccs", "bins"]:
-            show_cc_add_wizard(call, category)
-            return
-            
-        user_states[call.from_user.id] = f"awaiting_json_{category}"
-        # Present helper controls: Cancel and Use Last Draft (if exists)
-        markup = types.InlineKeyboardMarkup()
-        # In-memory last draft store per admin id, per category
-        last_key = f"last_draft_{call.from_user.id}_{category}"
-        if user_states.get(last_key):
-            markup.add(types.InlineKeyboardButton("📝 Use Last Draft", callback_data=f"admin_use_last_{category}"))
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cancel_add_{category}"))
-        if category in RESTRICTED_MEDIA_CATEGORIES:
-            base = f"Please send the new item details for the **{CATEGORY_NAMES[category]}** category in JSON format (text only).\n\nRequired keys: `name`, `price`, `description`.\n\n"
-            if category == "bins":
-                example = (
-                    "Example BIN (with optional fields):\n"
-                    "```json\n"
-                    "{\n"
-                    '  "name": "Netflix BIN",\n'
-                    '  "price": 10,\n'
-                    '  "description": "For Netflix, Spotify, etc.",\n'
-                    '  "bin": "4567890000000000",\n'
-                    '  "status": "WORKING",\n'
-                    '  "country": "USA",\n'
-                    '  "info": "VISA Credit Traditional",\n'
-                    '  "bank": "CHASE BANK"\n'
-                    "}\n"
-                    "```\n\n"
-                )
-            elif category == "gift_cards":
-                example = (
-                    "Example Gift Card item:\n"
-                    "```json\n"
-                    "{\n"
-                    '  "name": "Amazon Gift Card $50",\n'
-                    '  "price": 50,\n'
-                    '  "description": "$50 Amazon US Gift Card."\n'
-                    "}\n"
-                    "```\n\n"
-                )
-            else:  # ready_ccs
-                example = (
-                    "Example Credit Card (use same fields as BIN):\n"
-                    "```json\n"
-                    "{\n"
-                    '  "name": "Premium CC",\n'
-                    '  "price": 35,\n'
-                    '  "description": "High balance CC.",\n'
-                    '  "bin": "5123450000000000",\n'
-                    '  "status": "WORKING",\n'
-                    '  "country": "UK",\n'
-                    '  "info": "MasterCard Debit",\n'
-                    '  "bank": "BARCLAYS BANK PLC"\n'
-                    "}\n"
-                    "```\n\n"
-                )
-            text = base + example + "Note: media or link-only submissions are not allowed for this category."
-        else:
-            text = (
-                f"Please send the new item details for the **{CATEGORY_NAMES[category]}** category.\n\n"
-                "Options:\n"
-                "1) JSON (text) with keys: `name`, `price`, `description`, optional `delivery_type` ('link','file','text','tg_document','tg_photo','tg_video','tg_animation') and `delivery_content`.\n"
-                "2) Send ANY file (document/photo/video/animation). Optional caption: `Name | Price | Description`.\n"
-                "3) Send a LINK (http/https) or plain TEXT as the content.\n\n"
-                "Examples:\n"
-                "- Caption + file: `Carding PDF Guide | 75 | Complete guide`\n"
-                "- JSON with text delivery:\n"
-                "```json\n{\n  \"name\": \"Private Login\",\n  \"price\": 50,\n  \"description\": \"Login for a premium service.\",\n  \"delivery_type\": \"text\",\n  \"delivery_content\": \"<b>Service</b>: Example\n<b>User</b>: u\n<b>Pass</b>: p\"\n}\n```\n"
-            )
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_cancel_add_"))
-    def admin_cancel_add_item(call):
-        category = call.data.replace("admin_cancel_add_", "", 1)
-        # Clear state
-        try:
-            user_states.pop(call.from_user.id, None)
-        except Exception:
-            pass
-        # Navigate back to category menu
-        call.data = f"admin_cat_menu_{category}"
-        category_menu_callback(call)
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_use_last_"))
-    def admin_use_last_draft(call):
-        category = call.data.replace("admin_use_last_", "", 1)
-        last_key = f"last_draft_{call.from_user.id}_{category}"
-        draft = user_states.get(last_key)
-        if not draft:
-            bot.answer_callback_query(call.id, "No draft found.")
-            return
-        # Re-send JSON to allow quick edit and send
-        bot.edit_message_text(
-            f"Restored last draft for <b>{CATEGORY_NAMES.get(category, category)}</b>:\n\n<code>{json.dumps(draft, indent=2)}</code>\n\nSend updated JSON now, or press Cancel.",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        )
-
-    # ===== ADD ITEM WIZARD =====
-    def _is_wizard(uid):
-        st = user_states.get(uid)
-        return isinstance(st, dict) and st.get("flow") == "add_wizard"
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_addwiz_"))
-    def add_item_wizard_start(call):
-        category = call.data.replace("admin_addwiz_", "", 1)
-        if category in RESTRICTED_MEDIA_CATEGORIES:
-            bot.answer_callback_query(call.id, "This category only accepts JSON via text (no media/link-only).", show_alert=True)
-            return
-        user_states[call.from_user.id] = {"flow": "add_wizard", "category": category, "step": "name", "data": {}}
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"admin_cat_menu_{category}"))
-        bot.edit_message_text(
-            f"🧭 <b>Add {CATEGORY_NAMES.get(category, 'Item')} via Wizard</b>\n\nStep 1/5 — Send the <b>Name</b> of the item.",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=markup,
-            parse_mode="HTML",
-        )
-
-    @bot.message_handler(func=lambda m: _is_wizard(m.from_user.id) and user_states[m.from_user.id].get("step") in ("name","price","quantity","description","bin"), content_types=['text'])
-    def add_item_wizard_text_steps(message):
-        st = user_states.get(message.from_user.id)
-        step = st.get("step")
-        data = st.get("data", {})
-        category = st.get("category")
-        if message.text.strip().lower() in {"/cancel", "cancel"}:
-            del user_states[message.from_user.id]
-            bot.send_message(message.chat.id, "❌ Wizard cancelled.")
-            return
-        try:
-            if step == "name":
-                data["name"] = message.text.strip()
-                st["step"] = "price"
-                bot.send_message(message.chat.id, "Step 2/5 — Send the <b>Price</b> in USD (number).", parse_mode="HTML")
-            elif step == "price":
-                price_val = int(message.text.strip())
-                if price_val < 0:
-                    raise ValueError("Price must be >= 0")
-                data["price"] = price_val
-                st["step"] = "quantity"
-                bot.send_message(message.chat.id, "Step 3/5 — Send the <b>Quantity</b> (0 for unlimited).", parse_mode="HTML")
-            elif step == "quantity":
-                qty_val = int(message.text.strip())
-                if qty_val < 0:
-                    raise ValueError("Quantity must be >= 0")
-                data["quantity"] = qty_val
-                # For method_bins, ask for a BIN before description/content
-                if category == "method_bins":
-                    st["step"] = "bin"
-                    bot.send_message(message.chat.id, "Step 4/6 — Send the <b>BIN</b> (e.g., 456789).", parse_mode="HTML")
-                else:
-                    st["step"] = "description"
-                    bot.send_message(message.chat.id, "Step 4/5 — Send the <b>Description</b> (text).", parse_mode="HTML")
-            elif step == "bin":
-                # Basic normalization for BIN value
-                data["bin"] = message.text.strip().replace(" ", "")
-                st["step"] = "description"
-                bot.send_message(message.chat.id, "Step 5/6 — Send the <b>Description</b> (text).", parse_mode="HTML")
-            elif step == "description":
-                data["description"] = message.text.strip()
-                st["step"] = "content"
-                # Step label depends if category is method_bins
-                final_step = "6/6" if category == "method_bins" else "5/5"
-                bot.send_message(
-                    message.chat.id,
-                    f"Step {final_step} — Send the <b>Content</b>:\n- Paste a <b>link</b> (starts with http/https),\n- Or write <b>text</b>,\n- Or send a <b>file/photo/video/animation</b>.",
-                    parse_mode="HTML",
-                )
-        except ValueError as ve:
-            bot.send_message(message.chat.id, f"❌ {ve}")
-        except Exception as e:
-            bot.send_message(message.chat.id, f"❌ Error: {e}")
-
-    @bot.message_handler(func=lambda m: _is_wizard(m.from_user.id) and user_states[m.from_user.id].get("step") == 'content', content_types=['text','document','photo','video','animation'])
-    def add_item_wizard_content(message):
-        st = user_states.get(message.from_user.id)
-        data = st.get("data", {})
-        category = st.get("category")
-        try:
-            delivery_type = None
-            delivery_content = None
-            if message.content_type == 'text':
-                txt = message.text.strip()
-                if txt.lower() in {"/cancel","cancel"}:
-                    del user_states[message.from_user.id]
-                    bot.send_message(message.chat.id, "❌ Wizard cancelled.")
-                    return
-                if txt.startswith("http://") or txt.startswith("https://"):
-                    delivery_type = 'link'
-                    delivery_content = txt
-                else:
-                    delivery_type = 'text'
-                    delivery_content = txt
-            elif message.content_type == 'document':
-                delivery_type = 'tg_document'
-                delivery_content = message.document.file_id
-            elif message.content_type == 'photo':
-                delivery_type = 'tg_photo'
-                delivery_content = message.photo[-1].file_id
-            elif message.content_type == 'video':
-                delivery_type = 'tg_video'
-                delivery_content = message.video.file_id
-            elif message.content_type == 'animation':
-                delivery_type = 'tg_animation'
-                delivery_content = message.animation.file_id
-            else:
-                raise ValueError("Unsupported content type")
-
-            item = {
-                "name": data.get("name", "Unnamed"),
-                "price": data.get("price", 0),
-                "description": data.get("description", ""),
-                "delivery_type": delivery_type,
-                "delivery_content": delivery_content,
-            }
-            # Save BIN for bundle category
-            if st.get("category") == "method_bins" and data.get("bin"):
-                item["bin"] = data.get("bin")
-            if "quantity" in data:
-                item["quantity"] = data["quantity"]
-
-            products_data = get_products_from_cache()
-            if category not in products_data:
-                products_data[category] = []
-            products_data[category].append(item)
-            save_products_to_file_and_reload(products_data)
-            del user_states[message.from_user.id]
-            bot.send_message(message.chat.id, f"✅ Added new item to <b>{CATEGORY_NAMES.get(category, category)}</b>.", parse_mode="HTML")
-        except Exception as e:
-            bot.send_message(message.chat.id, f"❌ Error: {e}")
-
-    def _parse_key_value_caption(caption: str) -> dict:
-        """Parses a multi-line key: value caption into a dictionary."""
-        data = {}
-        if not caption:
-            return data
-        for line in caption.strip().split('\n'):
-            if ':' in line:
-                key, value = line.split(':', 1)
-                key = key.strip().lower().replace(' ', '_')
-                value = value.strip()
-                if key and value:
-                    # Try to convert price to a number
-                    if key in ['price', 'quantity']:
-                        try:
-                            data[key] = int(value)
-                        except ValueError:
-                            data[key] = value # Keep as string if conversion fails
+                    if order_data:
+                        user_id, status, created_at, item_name, price = order_data
                     else:
-                        data[key] = value
-        return data
-
-    def _parse_caption_meta(caption: str):
-        name, price, desc = None, None, None
-        if caption:
-            parts = [p.strip() for p in caption.split('|')]
-            if len(parts) >= 1:
-                name = parts[0] or None
-            if len(parts) >= 2:
-                try:
-                    price = int(parts[1].replace('$','').strip())
-                except Exception:
-                    price = None
-            if len(parts) >= 3:
-                desc = parts[2]
-        return name, price, desc
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, "").startswith("awaiting_json_"), content_types=['text','document','photo','video','animation'])
-    def handle_add_item_message(message):
-        admin_id = message.from_user.id
-        state = user_states[admin_id]
-        category = state.replace("awaiting_json_", "")
-        try:
-            products_data = get_products_from_cache()
-            item = None
-
-            if category in RESTRICTED_MEDIA_CATEGORIES:
-                # Only accept JSON text for restricted categories
-                if message.content_type != 'text':
-                    raise ValueError("This category only accepts JSON via text (no media or link-only).")
-                try:
-                    parsed = json.loads(message.text)
-                    if not all(k in parsed for k in ["name", "price", "description"]):
-                        raise ValueError("Missing required keys: name, price, description.")
-                    item = parsed
-                except json.JSONDecodeError:
-                    raise ValueError("Invalid JSON. Please send a valid JSON object.")
-            else:
-                if message.content_type == 'text':
-                    # Try JSON first; else parse simple caption format
-                    try:
-                        parsed = json.loads(message.text)
-                        if not all(k in parsed for k in ["name", "price", "description"]):
-                            raise ValueError("Missing required keys: name, price, description.")
-                        item = parsed
-                    except json.JSONDecodeError:
-                        n, p, d = _parse_caption_meta(message.text)
-                        if not (n and p):
-                            # Allow plain link/text as content via wizard-like behavior
-                            # Interpret as content message when caption pattern missing
-                            txt = message.text.strip()
-                            if txt.startswith("http://") or txt.startswith("https://"):
-                                item = {"name": "Link Item", "price": 0, "description": "", "delivery_type": "link", "delivery_content": txt}
-                            else:
-                                item = {"name": "Text Item", "price": 0, "description": "", "delivery_type": "text", "delivery_content": txt}
-                        else:
-                            item = {"name": n, "price": p, "description": d or ""}
-
-                elif message.content_type in ['document','photo','video','animation']:
-                    # Use the new key-value parser for captions
-                    caption_data = _parse_key_value_caption(message.caption or "")
-
-                    # Extract file_id and map to delivery type
-                    if message.document:
-                        file_id = message.document.file_id
-                        delivery_type = 'tg_document'
-                    elif message.photo:
-                        file_id = message.photo[-1].file_id
-                        delivery_type = 'tg_photo'
-                    elif message.video:
-                        file_id = message.video.file_id
-                        delivery_type = 'tg_video'
-                    elif message.animation:
-                        file_id = message.animation.file_id
-                        delivery_type = 'tg_animation'
-                    else:
-                        raise ValueError("Unsupported media type")
-
-                    # Start with the data from the caption
-                    item = caption_data
-
-                    # Add/overwrite delivery details
-                    item['delivery_type'] = delivery_type
-                    item['delivery_content'] = file_id
-
-                    # Ensure essential keys have default values if not in caption
-                    if 'name' not in item:
-                        item['name'] = f"Uploaded {delivery_type.split('_')[1].title()}"
-                    if 'price' not in item:
-                        item['price'] = 0
-                    if 'description' not in item:
-                        item['description'] = ""
-
+                        bot.answer_callback_query(call.id, "Payment not found", show_alert=True)
+                        return
                 else:
-                    raise ValueError("Unsupported message type")
+                    user_id, status, created_at, item_name, price = enhanced_data
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Error: {str(e)}", show_alert=True)
+            return
+        
+        # Get user info
+        try:
+            user_info = bot.get_chat(user_id)
+            user_name = f"{user_info.first_name or 'Unknown'} {user_info.last_name or ''}".strip()
+            username = f"@{user_info.username}" if user_info.username else "No username"
+        except:
+            user_name = "Unknown User"
+            username = "No username"
+        
+        text = (
+            f"💳 <b>Payment Management</b>\n\n"
+            f"📄 <b>Payment ID:</b> <code>{payment_id}</code>\n"
+            f"👤 <b>User:</b> {user_name} ({username})\n"
+            f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
+            f"🛍️ <b>Item:</b> {item_name or 'Unknown'}\n"
+            f"💰 <b>Amount:</b> ${price or 'Unknown'}\n"
+            f"📅 <b>Created:</b> {created_at or 'Unknown'}\n"
+            f"🔄 <b>Status:</b> {status or 'Unknown'}\n\n"
+            f"Choose an action for this payment:"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        
+        if status in ['pending_review', 'screenshot_uploaded', 'PENDING_APPROVAL']:
+            markup.add(
+                types.InlineKeyboardButton("✅ Approve", callback_data=f"quick_approve_{payment_id}"),
+                types.InlineKeyboardButton("❌ Reject", callback_data=f"enhanced_quick_reject_{payment_id}")
+            )
+            markup.add(
+                types.InlineKeyboardButton("💬 Approve + Message", callback_data=f"approve_with_remarks_{payment_id}"),
+                types.InlineKeyboardButton("📝 Reject + Reason", callback_data=f"reject_with_remarks_{payment_id}")
+            )
+        
+        markup.add(
+            types.InlineKeyboardButton("🔍 View Details", callback_data=f"view_payment_details_{payment_id}"),
+            types.InlineKeyboardButton("💬 Chat with User", callback_data=f"admin_chat_user_{user_id}")
+        )
+        markup.add(
+            types.InlineKeyboardButton("⬅️ Back to Payments", callback_data="admin_payments_menu")
+        )
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                             reply_markup=markup, parse_mode="HTML")
+    
+    # Helper handlers for admin chat functionality
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_send_msg_"))
+    def admin_send_message_prompt(call):
+        """Prompt admin to send message to user"""
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
+            return
+        
+        user_id = call.data.replace("admin_send_msg_", "")
+        bot.answer_callback_query(call.id, "This feature is coming soon!", show_alert=True)
+    
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_user_orders_"))
+    def admin_view_user_orders(call):
+        """View user's order history"""
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
+            return
+        
+        user_id = int(call.data.replace("admin_user_orders_", ""))
+        
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            orders = cursor.execute('''
+                SELECT order_id, item_name, price_usd, payment_status, creation_date
+                FROM orders WHERE user_id = ?
+                ORDER BY creation_date DESC LIMIT 10
+            ''', (user_id,)).fetchall()
+        
+        if not orders:
+            text = f"📋 <b>User Orders</b>\n\n🆔 User ID: <code>{user_id}</code>\n\n❌ No orders found."
+        else:
+            text = f"📋 <b>User Orders</b>\n\n🆔 User ID: <code>{user_id}</code>\n\n"
+            for order in orders[:5]:  # Show first 5
+                order_id, item_name, price, status, date = order
+                text += f"📄 <code>{order_id}</code>\n🛍️ {item_name}\n💰 ${price} • {status}\n📅 {date}\n\n"
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data=f"admin_chat_user_{user_id}"))
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                             reply_markup=markup, parse_mode="HTML")
+    
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_user_balance_"))
+    def admin_view_user_balance(call):
+        """View user's balance"""
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
+            return
+        
+        user_id = int(call.data.replace("admin_user_balance_", ""))
+        
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            balance = cursor.execute('SELECT balance_usd FROM users WHERE user_id = ?', (user_id,)).fetchone()
+        
+        balance_amount = balance[0] if balance else 0.0
+        
+        text = (
+            f"💰 <b>User Balance</b>\n\n"
+            f"🆔 User ID: <code>{user_id}</code>\n"
+            f"💵 Balance: <b>${balance_amount:.2f} USD</b>\n\n"
+            f"Options:"
+        )
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("➕ Add Funds", callback_data=f"admin_add_funds_{user_id}"),
+            types.InlineKeyboardButton("➖ Remove Funds", callback_data=f"admin_remove_funds_{user_id}")
+        )
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data=f"admin_chat_user_{user_id}"))
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                             reply_markup=markup, parse_mode="HTML")
+    
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_notify_user_"))
+    def admin_notify_user(call):
+        """Send notification to user"""
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
+            return
+        
+        user_id = call.data.replace("admin_notify_user_", "")
+        bot.answer_callback_query(call.id, "Notification feature coming soon!", show_alert=True)
+    
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_add_funds_") or call.data.startswith("admin_remove_funds_"))
+    def admin_balance_modification(call):
+        """Handle balance modification requests"""
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Admin access only", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "Balance modification coming soon!", show_alert=True)
 
-            # Save last draft for quick reuse
+    # --- Log viewing (tail) ---
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_view_log")
+    def admin_view_log(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True); return
+        log_path = "bot.log"
+        try:
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()[-40:]
+            content = ''.join(lines).strip()
+            if not content:
+                content = "(log file empty)"
+            # Escape HTML special chars for safe display
+            import html
+            safe_content = html.escape(content)
+            text = f"📄 <b>bot.log (last {len(lines)} lines)</b>\n\n<pre>{safe_content}</pre>"
+        except FileNotFoundError:
+            text = "📄 <b>bot.log</b> not found."
+        except Exception as e:
+            text = f"⚠️ Failed to read log: {e}"
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("🔄 Refresh", callback_data="admin_view_log"),
+            types.InlineKeyboardButton("🧹 Clear", callback_data="admin_clear_logs_confirm")
+        )
+        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_settings_menu"))
+        # If content length exceeds Telegram max (~4096) trim center
+        if len(text) > 3900:
+            # Keep head and tail around 1500 each
+            head = safe_content[:1500]
+            tail = safe_content[-1500:]
+            trimmed = head + "\n...<trimmed>...\n" + tail
+            text = f"📄 <b>bot.log (trimmed)</b>\n\n<pre>{trimmed}</pre>"
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception:
             try:
-                user_states[f"last_draft_{admin_id}_{category}"] = item
+                bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
             except Exception:
                 pass
 
-            # Ensure category key exists
-            if category not in products_data:
-                products_data[category] = []
-            products_data[category].append(item)
-            save_products_to_file_and_reload(products_data)
-            bot.send_message(message.chat.id, f"✅ Successfully added new item to <b>{CATEGORY_NAMES[category]}</b>.", parse_mode="HTML")
-            del user_states[admin_id]
-        except Exception as e:
-            bot.send_message(message.chat.id, f"❌ An error occurred: {e}")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_remove_list_"))
-    def remove_item_list_callback(call):
-        category = call.data.replace("admin_remove_list_", "")
-        items = get_products_from_cache(category)
-        
-        if not items:
-            bot.answer_callback_query(call.id, f"No items to remove in {CATEGORY_NAMES[category]}.", show_alert=True)
-            return
-            
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for index, item in enumerate(items):
-            markup.add(types.InlineKeyboardButton(f"🗑️ {item['name']}", callback_data=f"admin_delete_{category}_{index}"))
-        
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data=f"admin_cat_menu_{category}"))
-        bot.edit_message_text(f"➖ **Remove from {CATEGORY_NAMES[category]}**\n\nSelect an item to delete permanently:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_delete_"))
-    def delete_item_callback(call):
+    # --- Clear logs confirmation ---
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_clear_logs_confirm")
+    def admin_clear_logs_confirm(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True); return
+        text = (
+            "🧹 <b>Clear Logs</b>\n\n"
+            "This will truncate the <code>bot.log</code> file.\n"
+            "Are you sure you want to proceed?"
+        )
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✅ Yes, Clear", callback_data="admin_clear_logs"),
+            types.InlineKeyboardButton("❌ Cancel", callback_data="admin_settings_menu")
+        )
         try:
-            # Pattern: admin_delete_{category}_{index} where category may contain underscores
-            prefix = "admin_delete_"
-            payload = call.data[len(prefix):]
-            category, index_str = payload.rsplit('_', 1)
-            index = int(index_str)
-            products_data = get_products_from_cache()
-            if 0 <= index < len(products_data[category]):
-                # Remove the item from the list at the specified index.
-                products_data[category].pop(index)
-                save_products_to_file_and_reload(products_data)
-                bot.answer_callback_query(call.id, "✅ Item successfully removed.")
-                # Refresh the list of items to show the change immediately.
-                remove_item_list_callback(call)
-            else:
-                raise IndexError("The selected item index is out of range, it might have been deleted already.")
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
+
+    # --- Perform log clearing ---
+    @bot.callback_query_handler(func=lambda call: call.data == "admin_clear_logs")
+    def admin_clear_logs(call):
+        if call.from_user.id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Owner only", show_alert=True); return
+        log_path = "bot.log"
+        try:
+            open(log_path, 'w').close()
+            bot.answer_callback_query(call.id, "Logs cleared")
         except Exception as e:
-            bot.answer_callback_query(call.id, f"❌ Error: {e}", show_alert=True)
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_orders")
-    def admin_orders_callback(call):
-        if call.from_user.id != ADMIN_ID: return
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id, item_name, price_usd, payment_status FROM orders ORDER BY creation_date DESC LIMIT 10")
-            orders = cursor.fetchall()
-        if not orders:
-            text = "📦 **Recent Orders**\n\nThere are no orders in the database yet."
-        else:
-            text = "📦 **Last 10 Orders**\n\n`User ID | Item Name | Price | Status`\n" + "-"*40 + "\n"
-            for user_id, item, price, status in orders:
-                text += f"`{user_id}` | `{item}` | `${price}` | `{status}`\n"
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-    @bot.callback_query_handler(func=lambda call: call.data == "admin_users" or call.data.startswith("admin_users_page_"))
-    def admin_users_callback(call):
-        if call.from_user.id != ADMIN_ID: return
-        import math
-        page = 0
-        if call.data.startswith("admin_users_page_"):
-            page = int(call.data.split('_')[-1])
-        page_size = 10
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(user_id) FROM users")
-            count = cursor.fetchone()[0]
-            cursor.execute("SELECT user_id, username, join_date, phone_number, referral_count FROM users ORDER BY join_date DESC LIMIT ? OFFSET ?", (page_size, page*page_size))
-            users = cursor.fetchall()
-        total_pages = math.ceil(count / page_size)
-        text = f"<b>👥 Registered Users (Page {page+1}/{total_pages})</b>\nTotal: <b>{count}</b>\n\n"
-        if not users:
-            text += "No users found."
-        else:
-            for u in users:
-                text += f"<b>ID:</b> <code>{u[0]}</code> | <b>Name:</b> {u[1]} | <b>Refs:</b> {u[4]} | <b>Reg:</b> {u[2][:10]}\n"
-        markup = types.InlineKeyboardMarkup()
-        nav_buttons = []
-        if page > 0:
-            nav_buttons.append(types.InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_users_page_{page-1}"))
-        if page < total_pages-1:
-            nav_buttons.append(types.InlineKeyboardButton("Next ➡️", callback_data=f"admin_users_page_{page+1}"))
-        if nav_buttons:
-            markup.row(*nav_buttons)
-        markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="admin_panel"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
+            bot.answer_callback_query(call.id, f"Err: {e}", show_alert=True)
+        # Return to settings menu
+        try:
+            admin_settings_menu(call)
+        except Exception:
+            pass

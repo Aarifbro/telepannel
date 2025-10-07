@@ -7,6 +7,7 @@ import telebot
 from telebot import types
 
 from config import API_TOKENS, ADMIN_ID, DB_NAME, MEDIA_SOURCE_GROUP_IDS, WELCOME_GIF
+from admin_meta_db import init_admin_meta, migrate_from_json, get_section_status as meta_get_status, set_section_status as meta_set_status, list_all_statuses
 from database import (
     init_db, add_user, get_user_credits, update_user_credits, 
     generate_pro_key, get_all_pro_keys, validate_and_use_pro_key
@@ -49,16 +50,14 @@ def _notify_cc_success(bot_instance, cc_string, result_obj, user_id):
                     pass
     except Exception as e:
         print(f"CC success notify error: {e}")
-from bin_handler import register_bin_handlers
 from payment_handler import register_payment_handlers, show_payment_options
 from other_handlers import register_other_handlers
-from support_handler import register_perfect_support_handlers
+from perfect_support import register_perfect_support_handlers
 from admin_communication import register_admin_communication_handlers, register_enhanced_admin_handlers, register_admin_message_handlers
 from enhanced_payment_system import register_enhanced_payment_handlers
 
 
-# --- Section Status Storage ---
-SECTION_STATUS_FILE = "section_status.json"
+# --- Section Status Storage (DB-backed) ---
 SECTION_STATUS_OPTIONS = [
     ("coming_soon", "🟡 Coming Soon"),
     ("error", "🔴 Error"),
@@ -76,25 +75,11 @@ SECTION_KEYS = [
     ("other", "Other")
 ]
 
-
 def set_section_status(section_key, status_key):
-    try:
-        with open(SECTION_STATUS_FILE, "r") as f:
-            data = json.load(f)
-    except Exception:
-        data = {}
-    data[section_key] = status_key
-    with open(SECTION_STATUS_FILE, "w") as f:
-        json.dump(data, f)
-
+    meta_set_status(section_key, status_key)
 
 def get_section_status(section_key):
-    try:
-        with open(SECTION_STATUS_FILE, "r") as f:
-            data = json.load(f)
-            return data.get(section_key, "coming_soon")
-    except Exception:
-        return "coming_soon"
+    return meta_get_status(section_key)
 
 
 # Global user states (simple approach shared across bots)
@@ -133,7 +118,7 @@ def save_products_to_file_and_reload(new_data):
 
 def register_all_handlers(bot_instance):
     # Register handlers from other modules
-    register_bin_handlers(bot_instance)
+    # BINs now unified under bundle/method_bins search; legacy bin_handler removed.
     register_payment_handlers(bot_instance)
     register_other_handlers(bot_instance, user_states, get_products_from_cache, save_products_to_file_and_reload)
     register_perfect_support_handlers(bot_instance)
@@ -306,6 +291,20 @@ def register_all_handlers(bot_instance):
         send_main_menu(bot_instance, user_id, "Please choose an option:")
 
     # --- Admin handlers for Pro Keys ---
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "admin_analytics_menu")
+    def admin_analytics_menu_callback(call):
+        """Displays the main analytics menu."""
+        text = "📈 <b>Analytics Dashboard</b>\n\nSelect a category to view analytics:"
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("📊 Sales Analytics", callback_data="analytics_sales"),
+            types.InlineKeyboardButton("👥 User Analytics", callback_data="analytics_users"),
+            types.InlineKeyboardButton("🛒 Product Analytics", callback_data="analytics_products"),
+            types.InlineKeyboardButton("🎯 Support Analytics", callback_data="admin_support_analytics")
+        )
+        markup.add(types.InlineKeyboardButton("⬅️ Back to Admin Panel", callback_data="admin_panel"))
+        bot_instance.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
+
     @bot_instance.callback_query_handler(func=lambda call: call.data == "manage_pro_keys")
     def manage_pro_keys_panel(call):
         if call.from_user.id != ADMIN_ID:
@@ -792,6 +791,37 @@ def register_all_handlers(bot_instance):
     def cmd_ownerinfo(message):
         bot_instance.reply_to(message, f"Configured owner (ADMIN_ID): <code>{ADMIN_ID}</code>\nYour user ID: <code>{message.from_user.id}</code>", parse_mode="HTML")
 
+    @bot_instance.message_handler(commands=['admin_diag'])
+    def cmd_admin_diag(message):
+        if message.from_user.id != ADMIN_ID:
+            return
+        try:
+            statuses = list_all_statuses()
+            lines = "\n".join([f"{k}: {v}" for k, v in statuses]) or "(none)"
+        except Exception as e:
+            lines = f"Error: {e}"
+        bot_instance.reply_to(message, "🛠️ <b>Diagnostics</b>\n\n<b>Section Statuses</b>:\n" + lines, parse_mode="HTML")
+
+    # Utility: Show the current admin role classification for diagnostics
+    @bot_instance.message_handler(commands=['admin_role'])
+    def cmd_admin_role(message):
+        user_id = message.from_user.id
+        with sqlite3.connect(DB_NAME) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,))
+            is_global = cur.fetchone() is not None
+            cur.execute("SELECT section FROM section_admins WHERE user_id = ?", (user_id,))
+            sections = [r[0] for r in cur.fetchall()]
+        if user_id == ADMIN_ID:
+            role = "👑 Owner"
+        elif is_global:
+            role = "🛡️ Global Admin"
+        elif sections:
+            role = "🔧 Section Admin (" + ", ".join(sections) + ")"
+        else:
+            role = "👤 Regular User"
+        bot_instance.reply_to(message, f"Role: {role}\nYour ID: <code>{user_id}</code>", parse_mode="HTML")
+
     # Admin command: Clean up users who left channels
     @bot_instance.message_handler(commands=['cleanup'])
     def cmd_cleanup_users(message):
@@ -871,6 +901,13 @@ def run_bot(bot_instance, name):
             time.sleep(20)
 if __name__ == '__main__':
     print("🤖 Starting bots...")
+    # Initialize admin meta DB and migrate legacy JSON
+    try:
+        init_admin_meta()
+        migrate_from_json("section_status.json")
+        print("✅ Admin meta DB initialized (section statuses loaded).")
+    except Exception as e:
+        print(f"Admin meta DB init error: {e}")
     init_db()
     load_all_products_into_cache()  # Load products into memory at startup
 
