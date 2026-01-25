@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  escrow-bot:
+    build: .
+    container_name: telegram-escrow-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Mount data directory for persistent database
+      - ./data:/app/data
+      # Optionally mount .env file if not using env_file above
+      # - ./.env:/app/.env:ro
+    environment:
+      - DB_PATH=/app/data/escrow_bot.db
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Health check (optional)
+    # healthcheck:
+    #   test: ["CMD", "python3", "-c", "import requests; requests.get('https://api.telegram.org')"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3

@@ -1,0 +1,9 @@
+buildpacks:
+  - heroku/python
+
+env:
+  PYTHONUNBUFFERED: "1"
+  
+# Note: You need to set BOT_TOKEN and ADMIN_ID in Heroku config vars
+# heroku config:set BOT_TOKEN=your_token_here
+# heroku config:set ADMIN_ID=your_user_id

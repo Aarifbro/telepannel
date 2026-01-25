@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+venv
+env
+
+# Environment
+.env.example
+
+# Database (should be in volume)
+*.db
+data/
+
+# Documentation
+*.md
+!README.md
+
+# Development
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache
+.coverage
+
+# Node
+node_modules
+
+# Temporary files
+*.tmp
+*.swp
+*~

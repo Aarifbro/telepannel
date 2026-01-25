@@ -287,6 +287,35 @@ Contributions are welcome! Feel free to:
 - Submit pull requests
 - Improve documentation
 
+## Deployment 🚀
+
+Ready to deploy your bot to a server? Check out our deployment guides:
+
+### Quick Deploy
+- **VPS/Server**: See [DEPLOYMENT.md](DEPLOYMENT.md) for complete server deployment guide
+- **Docker**: Use the included `Dockerfile` and `docker-compose.yml`
+- **Railway**: See [RAILWAY.md](RAILWAY.md) for Railway.app deployment
+- **Heroku**: Use the included `Procfile` for one-click Heroku deployment
+
+### Upload to Server
+```bash
+# Quick upload using rsync
+./upload-to-server.sh user@your-server-ip
+
+# Or manually using scp
+scp -r . user@your-server-ip:/opt/telepannel
+```
+
+### Deploy as System Service
+```bash
+# On your server
+sudo ./deploy.sh
+sudo systemctl start escrow-bot
+sudo systemctl enable escrow-bot
+```
+
+For detailed deployment instructions, monitoring, and troubleshooting, see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
 ## Disclaimer ⚠️
 
 This bot is a demonstration of escrow functionality. For production use:
