@@ -27,8 +27,14 @@ if [ ! -f .env ]; then
     echo ""
 fi
 
+echo "⚠️  Security Note: .env file is NOT uploaded (contains sensitive credentials)"
+echo "   You will need to create it manually on the server"
+echo ""
+
 # Sync files to server (excluding sensitive and unnecessary files)
 echo "📤 Syncing files to server..."
+echo "   Excluding: .git, venv, node_modules, __pycache__, *.db, *.log, .env"
+echo ""
 rsync -avz --progress \
     --exclude='.git' \
     --exclude='venv' \
@@ -44,10 +50,17 @@ rsync -avz --progress \
 echo ""
 echo "✅ Files uploaded successfully!"
 echo ""
+echo "⚠️  IMPORTANT: .env file was NOT uploaded for security reasons"
+echo ""
 echo "Next steps on the server:"
 echo "1. SSH into the server: ssh $SERVER"
 echo "2. Navigate to the bot directory: cd $REMOTE_DIR"
-echo "3. Create/edit .env file: nano .env"
+echo "3. Create .env file with your credentials:"
+echo "   nano .env"
+echo "   Add the following:"
+echo "     BOT_TOKEN=your_bot_token_from_botfather"
+echo "     ADMIN_ID=your_telegram_user_id"
+echo "     DB_PATH=$REMOTE_DIR/escrow_bot.db"
 echo "4. Run setup: sudo ./setup.sh"
 echo "5. Deploy as service: sudo ./deploy.sh"
 echo ""

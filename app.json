@@ -1,9 +1,26 @@
-buildpacks:
-  - heroku/python
-
-env:
-  PYTHONUNBUFFERED: "1"
-  
-# Note: You need to set BOT_TOKEN and ADMIN_ID in Heroku config vars
-# heroku config:set BOT_TOKEN=your_token_here
-# heroku config:set ADMIN_ID=your_user_id
+{
+  "name": "Telegram Escrow Bot",
+  "description": "Advanced Telegram bot for escrow services with fund management and delivery approval",
+  "repository": "https://github.com/Aarifbro/telepannel",
+  "keywords": ["telegram", "bot", "escrow", "python"],
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ],
+  "env": {
+    "BOT_TOKEN": {
+      "description": "Your bot token from @BotFather",
+      "required": true
+    },
+    "ADMIN_ID": {
+      "description": "Your Telegram user ID (get from @userinfobot)",
+      "required": true
+    },
+    "DB_PATH": {
+      "description": "Database file path",
+      "value": "./data/escrow_bot.db",
+      "required": false
+    }
+  }
+}
