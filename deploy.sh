@@ -5,7 +5,7 @@ SERVER_IP="13.63.48.32"
 SERVER_USER="ubuntu"
 PEM_KEY="ttshope.pem"
 REMOTE_DIR="/home/ubuntu/telepannel"
-LOCAL_DIR="/workspaces/telepannel/TSHOP/telepannel-main"
+LOCAL_DIR="./TSHOP/telepannel-main"
 
 echo "🚀 Starting deployment to $SERVER_IP..."
 
