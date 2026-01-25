@@ -40,7 +40,7 @@ case "$1" in
         echo "📤 Updating bot files..."
         rsync -avz --progress -e "ssh -i $PEM_KEY -o StrictHostKeyChecking=no" \
           --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' --exclude='*.log' --exclude='.venv' \
-          ./TSHOP/telepannel-main/ "$SERVER:/home/ubuntu/telepannel/"
+          /workspaces/telepannel/TSHOP/telepannel-main/ "$SERVER:/home/ubuntu/telepannel/"
         echo "🔄 Restarting bot..."
         ssh -i "$PEM_KEY" "$SERVER" "sudo systemctl restart tshop-bot.service"
         echo "✅ Update complete"
