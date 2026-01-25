@@ -1,0 +1,13 @@
+Flask
+requests
+gunicorn
+pyTelegramBotAPI
+python-telegram-bot
+python-dotenv
+aiohttp
+aiofiles
+pymongo
+dnspython
+pyrogram
+TgCrypto
+#@diwazz

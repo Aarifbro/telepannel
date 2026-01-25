@@ -1,0 +1,40 @@
+{
+  "accounts": [
+    {
+      "username": "bgmi_player_001",
+      "password": "Pass@12345",
+      "level": 45,
+      "uc": 1200,
+      "skins": 15
+    },
+    {
+      "username": "bgmi_gamer_002",
+      "password": "Game@54321",
+      "level": 32,
+      "uc": 800,
+      "skins": 8
+    },
+    {
+      "username": "pro_bgmi_003",
+      "password": "ProGamer@99",
+      "level": 67,
+      "uc": 2500,
+      "skins": 28
+    },
+    {
+      "username": "bgmi_elite_004",
+      "password": "Elite@7890",
+      "level": 22,
+      "uc": 500,
+      "skins": 5
+    },
+    {
+      "username": "champion_005",
+      "password": "Champ@2024",
+      "level": 55,
+      "uc": 1800,
+      "skins": 18
+    }
+  ],
+  "claimed_history": {}
+}

@@ -1,0 +1,14 @@
+{
+  "output_group": "https://t.me/+pVSHLFKLaqJhNzg1",
+  "premium_output_group": null,
+  "delay_seconds": 1800,
+  "last_checked": {},
+  "paused": false,
+  "instant_send": false,
+  "button_links": {
+    "premium": "https://t.me/premiumscraper",
+    "pay_here": "https://t.me/tittigateway",
+    "cc_checker": "https://t.me/+wYgnlULgpRMyMDI1",
+    "owner": "https://t.me/landchatle"
+  }
+}
