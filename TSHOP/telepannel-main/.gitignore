@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual envs
+.venv/
+venv/
+
+# Logs & runtime artifacts
+*.log
+bot.log
+referral_log.txt
+media_pool.json
+
+# Databases & local data
+*.sqlite
+*.sqlite3
+shop_bot.db
+
+# Env/config overrides
+.env
+.env.*
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
