@@ -983,19 +983,6 @@ def register_all_handlers(bot_instance):
         status_key = get_section_status(section_key)
         return next((label for key, label in SECTION_STATUS_OPTIONS if key == status_key), "🟡 Coming Soon")
 
-    @bot_instance.callback_query_handler(func=lambda call: call.data == "giftcards_menu")
-    def giftcards_status_panel(call):
-        status_key = get_section_status("gift_cards")
-        if status_key == "available":
-            from other_handlers import create_dynamic_product_menu
-            create_dynamic_product_menu(call, "gift_cards")
-        else:
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
-            status_label = get_section_status_label("gift_cards")
-            bot_instance.edit_message_text(f"🎁 Gift Cards\n\n<b>Status:</b> {status_label}", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="HTML")
-
-
     # Dumps
     @bot_instance.callback_query_handler(func=lambda call: call.data == "dumps_menu")
     def dumps_menu(call):
@@ -1124,10 +1111,10 @@ def register_all_handlers(bot_instance):
                 types.InlineKeyboardButton("🎯 Hitter", callback_data="hitter_menu")
             )
             markup.row(
-                types.InlineKeyboardButton("� Get Bot Zip", callback_data="get_bot_zip")
+                types.InlineKeyboardButton("📥 Get Bot Zip", callback_data="get_bot_zip")
             )
             markup.row(
-                types.InlineKeyboardButton("�📱 Open Private Chat", url=f"https://t.me/{bot_instance.get_me().username}")
+                types.InlineKeyboardButton("📱 Open Private Chat", url=f"https://t.me/{bot_instance.get_me().username}")
             )
             bot_instance.edit_message_text(
                 group_menu_text,
@@ -1149,6 +1136,25 @@ def register_all_handlers(bot_instance):
             )
             send_main_menu(bot_instance, call.message.chat.id, menu_text, call.message.message_id)
     
+    @bot_instance.callback_query_handler(func=lambda call: call.data == "get_bot_zip")
+    def get_bot_zip_callback(call):
+        """Handle get bot zip button - direct user to private chat for download"""
+        try:
+            bot_username = bot_instance.get_me().username
+            text = (
+                "📥 <b>Get Bot Files</b>\n\n"
+                "To get the bot files, please contact the admin in private chat.\n\n"
+                f"👉 <a href=\"https://t.me/{bot_username}\">Open Private Chat</a>"
+            )
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("📱 Open Private Chat", url=f"https://t.me/{bot_username}"))
+            markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="main_menu"))
+            bot_instance.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode="HTML")
+            bot_instance.answer_callback_query(call.id)
+        except Exception as e:
+            print(f"Error in get_bot_zip: {e}")
+            bot_instance.answer_callback_query(call.id, "Please contact admin in private chat.", show_alert=True)
+
     @bot_instance.callback_query_handler(func=lambda call: call.data == "rat_menu")
     def rat_menu_callback(call):
         """Handle rat menu button"""
