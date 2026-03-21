@@ -10,10 +10,10 @@ API_ID = int(os.environ.get("API_ID", "39622621"))
 API_HASH = os.environ.get("API_HASH", "965c577f30cb3ab538335ba7f3a5a149")
 
 API_TOKENS = [
-    "8227637354:AAH6Uorxo2jGJ1Sc1N94jwfv8wvsnP6rvug"
+    "7595637986:AAGJj6AftCmDTg6pr2E1K-W0Kt05qM4SkEE"
 ]
 
-ADMIN_IDS = [8409970602, 6127646960, 1513264586]
+ADMIN_IDS = [8409970602]
 
 # backward compatibility for older code
 ADMIN_ID = ADMIN_IDS[0] #2nd one me,3rd one your second id 
