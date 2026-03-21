@@ -10,9 +10,9 @@ client = None
 connection_errors = []
 
 connection_attempts = [
-    {"tlsAllowInvalidCertificates": True, "serverSelectionTimeoutMS": 10000},
-    {"tls": True, "tlsAllowInvalidCertificates": True},
-    {}  # Fallback to basic connection
+    {"tlsAllowInvalidCertificates": True, "serverSelectionTimeoutMS": 5000, "connectTimeoutMS": 5000},
+    {"tls": True, "tlsAllowInvalidCertificates": True, "serverSelectionTimeoutMS": 5000, "connectTimeoutMS": 5000},
+    {"serverSelectionTimeoutMS": 5000, "connectTimeoutMS": 5000}  # Fallback to basic connection
 ]
 
 for attempt_params in connection_attempts:

@@ -1,12 +1,10 @@
 """
-DEPRECATED: This module is kept for backward compatibility only.
-All new code should use database_mongodb.py instead.
-
-This file now acts as a wrapper that redirects all calls to MongoDB.
+Database wrapper module.
+Redirects all calls to the JSON file backend (database_json.py).
 """
 
-# Import all MongoDB functions
-from database_mongodb import (
+# Import all database functions (JSON backend)
+from database_json import (
     init_db,
     add_user,
     get_user_balance,

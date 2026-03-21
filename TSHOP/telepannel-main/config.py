@@ -56,11 +56,9 @@ FORCE_CHANNEL_LINKS = ["https://t.me/addlist/C1dZ9Vmj53Y4Y2I1"]
 DB_NAME = "shop_bot.db"  # Legacy SQLite (deprecated)
 PRODUCTS_FILE = "products.json"  # Legacy JSON file (deprecated)
 
-# --- MongoDB Configuration ---
-# Get MongoDB connection string from environment variable
-# Example: mongodb+srv://username:password@cluster.mongodb.net/dbname
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
-MONGO_DB_NAME = os.environ.get("MONGO_DB_NAME", "telepannel_shop")
+# --- Database Configuration ---
+# Data is stored in local JSON files under the data/ directory
+# No external database required
 
 # --- Animated GIFs for different events ---
 SUCCESS_GIF = "https://i.imgur.com/bZ3E0V0.gif"
