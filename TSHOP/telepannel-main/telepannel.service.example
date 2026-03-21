@@ -1,6 +1,7 @@
 [Unit]
 Description=Telepannel Telegram Bot
-After=network.target
+After=network.target network-online.target
+Wants=network-online.target
 StartLimitIntervalSec=400
 StartLimitBurst=3
 
@@ -10,13 +11,13 @@ WorkingDirectory=/opt/telepannel
 ExecStart=/opt/telepannel/.venv/bin/python /opt/telepannel/main.py
 Restart=on-failure
 RestartSec=15
-User=telepannel
-Group=telepannel
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
 # Hardening
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
-ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target
