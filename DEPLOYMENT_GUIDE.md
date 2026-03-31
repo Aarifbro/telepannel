@@ -1,121 +1,158 @@
 # Telepannel Bot Deployment Guide
 
 ## Server Information
+
+### Current VPS (root access)
+- **Server IP**: 203.57.85.72
+- **User**: root
+- **Remote Path**: /opt/telepannel
+- **SSH Key**: ttbot.pem (or password auth)
+- **Service name**: telepannel
+
+### Legacy server
 - **Server IP**: 13.63.29.233
 - **User**: ubuntu
 - **Remote Path**: /home/ubuntu/TTbot
-- **SSH Key**: ttbot.pem
 
-## Initial Deployment
+## Initial Deployment to VPS (203.57.85.72)
 
-### Step 1: Run the deployment script
+### Step 1: Set correct permissions on SSH key (if using key auth)
 ```bash
-chmod +x deploy_to_server.sh
-./deploy_to_server.sh
+chmod 600 ttbot.pem
+```
+
+### Step 2: Run the deployment script
+```bash
+chmod +x deploy_to_vps.sh
+./deploy_to_vps.sh
 ```
 
 This script will:
-1. ✓ Verify SSH connection
-2. ✓ Create remote directory structure
+1. ✓ Verify SSH connection to root@203.57.85.72
+2. ✓ Create `/opt/telepannel` on the VPS
 3. ✓ Transfer all bot files
-4. ✓ Install Python and dependencies
-5. ✓ Set up systemd service
-6. ✓ Start the bot
+4. ✓ Upload and run `vps_setup.sh` which:
+   - Installs Python 3, pip, venv, screen
+   - Creates a Python virtual environment
+   - Installs all dependencies from `requirements.txt`
+   - Installs and enables the `telepannel` systemd service
+   - Starts the bot automatically
 
-### Step 2: Choose startup method
-When prompted, select:
-- **Option 1**: Systemd service (recommended) - Auto-restarts on failure
-- **Option 2**: Screen session - Manual control
-- **Option 3**: Manual start - You'll start it yourself
+### Step 3: SSH into the VPS and verify
+```bash
+ssh root@203.57.85.72
+systemctl status telepannel
+journalctl -u telepannel -f
+```
 
 ## Quick Updates
 
-After initial setup, use the quick deploy script to update files:
+After initial setup, re-run the deploy script to push code changes:
 ```bash
-chmod +x quick_deploy.sh
-./quick_deploy.sh
+./deploy_to_vps.sh
 ```
 
-## Bot Management
-
-Use the management script for common tasks:
+Or manually sync only the bot files (requires rsync):
 ```bash
-chmod +x manage_bot.sh
-./manage_bot.sh
+rsync -az --exclude '__pycache__' --exclude '*.pyc' --exclude '.venv' \
+    TSHOP/telepannel-main/ root@203.57.85.72:/opt/telepannel/
+ssh root@203.57.85.72 "systemctl restart telepannel"
 ```
 
-Available options:
-1. Check bot status
-2. View live logs
-3. Start bot
-4. Stop bot
-5. Restart bot
-6. SSH into server
-7. Update bot files
-8. View error logs
+## Manual VPS Setup (without deploy script)
 
-## Manual Commands
+If you prefer to set up the VPS manually:
 
-### SSH into the server
 ```bash
-ssh -i ttbot.pem ubuntu@13.63.29.233
+# 1. SSH in
+ssh root@203.57.85.72
+
+# 2. Install prerequisites
+apt-get update && apt-get install -y python3 python3-pip python3-venv git screen
+
+# 3. Create directory and upload files (from local machine)
+mkdir -p /opt/telepannel
+# (run scp or rsync from your local machine to copy TSHOP/telepannel-main/* to /opt/telepannel/)
+
+# 4. Set up virtual environment and install deps
+cd /opt/telepannel
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# 5. Copy and enable systemd service
+cp telepannel.service.example /etc/systemd/system/telepannel.service
+systemctl daemon-reload
+systemctl enable telepannel
+systemctl start telepannel
+```
+
+## Bot Management on VPS
+
+### SSH into the VPS
+```bash
+# Using SSH key
+ssh -i ttbot.pem root@203.57.85.72
+
+# Using password
+ssh root@203.57.85.72
 ```
 
 ### Navigate to bot directory
 ```bash
-cd /home/ubuntu/TTbot
+cd /opt/telepannel
 ```
 
 ### Systemd Service Commands
 ```bash
 # Check status
-sudo systemctl status ttbot
+systemctl status telepannel
 
 # Start bot
-sudo systemctl start ttbot
+systemctl start telepannel
 
 # Stop bot
-sudo systemctl stop ttbot
+systemctl stop telepannel
 
 # Restart bot
-sudo systemctl restart ttbot
+systemctl restart telepannel
 
 # Enable auto-start on boot
-sudo systemctl enable ttbot
+systemctl enable telepannel
 
 # Disable auto-start
-sudo systemctl disable ttbot
+systemctl disable telepannel
 
 # View logs (live)
-sudo journalctl -u ttbot -f
+journalctl -u telepannel -f
 
 # View last 100 lines
-sudo journalctl -u ttbot -n 100
+journalctl -u telepannel -n 100
 ```
 
 ### Manual Start (without systemd)
 ```bash
-cd /home/ubuntu/TTbot
-source venv/bin/activate
+cd /opt/telepannel
+source .venv/bin/activate
 python3 main.py
 ```
 
 ### Screen Session Commands
 ```bash
 # Start in screen
-screen -dmS ttbot bash -c 'cd /home/ubuntu/TTbot && source venv/bin/activate && python3 main.py'
+screen -dmS telepannel bash -c 'cd /opt/telepannel && source .venv/bin/activate && python3 main.py'
 
 # Attach to session
-screen -r ttbot
+screen -r telepannel
 
 # Detach from session (while inside)
-Ctrl+A, then D
+# Press: Ctrl+A, then D
 
 # List all sessions
 screen -ls
 
 # Kill session
-screen -X -S ttbot quit
+screen -X -S telepannel quit
 ```
 
 ## Troubleshooting
@@ -123,66 +160,63 @@ screen -X -S ttbot quit
 ### Bot not starting
 1. Check logs:
    ```bash
-   sudo journalctl -u ttbot -n 50
+   journalctl -u telepannel -n 50
    ```
 
-2. Check if config/environment variables are set:
+2. Test manually to see full error output:
    ```bash
-   cd /home/ubuntu/TTbot
-   cat config.py
-   ```
-
-3. Test manually:
-   ```bash
-   cd /home/ubuntu/TTbot
-   source venv/bin/activate
+   cd /opt/telepannel
+   source .venv/bin/activate
    python3 main.py
+   ```
+
+3. Check config:
+   ```bash
+   cat /opt/telepannel/config.py
    ```
 
 ### Permission issues
 ```bash
-# Fix ownership
-sudo chown -R ubuntu:ubuntu /home/ubuntu/TTbot
-
-# Fix permissions
-chmod -R 755 /home/ubuntu/TTbot
+# Fix permissions (running as root so no sudo needed)
+chmod -R 755 /opt/telepannel
 ```
 
 ### Dependencies issues
 ```bash
-cd /home/ubuntu/TTbot
-source venv/bin/activate
+cd /opt/telepannel
+source .venv/bin/activate
 pip install -r requirements.txt --force-reinstall
 ```
 
 ### SSH connection issues
 ```bash
 # Verify key permissions
-chmod 400 ttbot.pem
+chmod 600 ttbot.pem
 
-# Test connection
-ssh -i ttbot.pem -v ubuntu@13.63.29.233
+# Test connection verbosely
+ssh -i ttbot.pem -v root@203.57.85.72
 ```
 
 ## Environment Variables
 
-If your bot requires environment variables (API tokens, etc.), set them in the systemd service:
+Override config values without editing `config.py` by setting env vars in the systemd service:
 
 1. Edit the service file:
    ```bash
-   sudo nano /etc/systemd/system/ttbot.service
+   nano /etc/systemd/system/telepannel.service
    ```
 
 2. Add environment variables in the `[Service]` section:
    ```ini
-   Environment="BOT_TOKEN=your_token_here"
-   Environment="DATABASE_URL=your_db_url"
+   Environment="API_ID=your_api_id"
+   Environment="API_HASH=your_api_hash"
+   Environment="MONGO_URI=mongodb+srv://user:pass@cluster.mongodb.net/db"
    ```
 
 3. Reload and restart:
    ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl restart ttbot
+   systemctl daemon-reload
+   systemctl restart telepannel
    ```
 
 ## Monitoring
@@ -190,7 +224,7 @@ If your bot requires environment variables (API tokens, etc.), set them in the s
 ### Check if bot is running
 ```bash
 # Using systemd
-sudo systemctl is-active ttbot
+systemctl is-active telepannel
 
 # Using ps
 ps aux | grep main.py
@@ -199,34 +233,32 @@ ps aux | grep main.py
 ### Monitor resource usage
 ```bash
 # CPU and memory
-top -p $(pgrep -f main.py)
-
-# Detailed stats
+top
 htop
 ```
 
 ## Backup
 
-### Backup bot data
+### Backup bot data from VPS
 ```bash
 # From your local machine
-rsync -avz -e "ssh -i ttbot.pem" ubuntu@13.63.29.233:/home/ubuntu/TTbot/accounts/ ./backup/accounts/
+rsync -avz root@203.57.85.72:/opt/telepannel/accounts/ ./backup/accounts/
 ```
 
 ## Security Notes
 
 1. Keep `ttbot.pem` secure (never commit to git)
-2. Use environment variables for sensitive data
-3. Regularly update the server:
+2. Use environment variables for sensitive data instead of editing `config.py`
+3. Regularly update the VPS:
    ```bash
-   sudo apt-get update && sudo apt-get upgrade
+   apt-get update && apt-get upgrade
    ```
 4. Monitor logs for suspicious activity
 
 ## Support
 
 For issues or questions:
-1. Check logs first: `sudo journalctl -u ttbot -f`
+1. Check logs first: `journalctl -u telepannel -f`
 2. Verify all dependencies are installed
 3. Ensure config files are properly set up
 4. Test manually before using systemd service
