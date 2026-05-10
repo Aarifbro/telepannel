@@ -173,6 +173,7 @@ def register_all_handlers(bot_instance):
     # --- Combined BINs + Methods menu ---
     @bot_instance.callback_query_handler(func=lambda call: call.data == "bins_methods_menu")
     def bins_methods_menu(call):
+        bot_instance.answer_callback_query(call.id)
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(types.InlineKeyboardButton("🔎 Select", callback_data="bins_methods_select"))
         markup.add(types.InlineKeyboardButton("⌨️ Enter", callback_data="bins_methods_enter"))
@@ -182,6 +183,7 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data == "bins_methods_select")
     def bins_methods_select(call):
         """Shows popular brand targets to pair Methods + BINs."""
+        bot_instance.answer_callback_query(call.id)
         brands = [
             ("netflix", "🎬 Netflix"),
             ("amazon", "🛒 Amazon"),
@@ -250,11 +252,13 @@ def register_all_handlers(bot_instance):
 
     @bot_instance.callback_query_handler(func=lambda call: call.data.startswith("bins_methods_brand_"))
     def bins_methods_brand(call):
+        bot_instance.answer_callback_query(call.id)
         key = call.data.replace("bins_methods_brand_", "")
         _render_combo_results(call, key)
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "bins_methods_enter")
     def bins_methods_enter(call):
+        bot_instance.answer_callback_query(call.id)
         user_states[call.from_user.id] = "awaiting_bins_methods_query"
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("⬅️ Back", callback_data="bins_methods_menu"))
@@ -281,6 +285,7 @@ def register_all_handlers(bot_instance):
     # --- My Orders (user view) ---
     @bot_instance.callback_query_handler(func=lambda call: call.data == "my_orders")
     def my_orders_callback(call):
+        bot_instance.answer_callback_query(call.id)
         user_id = call.from_user.id
         try:
             with sqlite3.connect(DB_NAME) as conn:
@@ -314,6 +319,7 @@ def register_all_handlers(bot_instance):
         user_id = call.from_user.id
         user_states[user_id] = "awaiting_pro_key"
         text = "Please send the pro key you received from the admin."
+        bot_instance.answer_callback_query(call.id)
         bot_instance.edit_message_text(text, user_id, call.message.message_id)
 
     @bot_instance.message_handler(func=lambda message: user_states.get(message.from_user.id) == "awaiting_pro_key")
@@ -337,6 +343,7 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data == "admin_analytics_menu")
     def admin_analytics_menu_callback(call):
         """Displays the main analytics menu."""
+        bot_instance.answer_callback_query(call.id)
         text = "📈 <b>Analytics Dashboard</b>\n\nSelect a category to view analytics:"
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -363,6 +370,7 @@ def register_all_handlers(bot_instance):
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "generate_pro_key")
     def generate_pro_key_callback(call):
+        bot_instance.answer_callback_query(call.id)
         if call.from_user.id != ADMIN_ID:
             return
         
@@ -788,6 +796,7 @@ def register_all_handlers(bot_instance):
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "force_join_help")
     def force_join_help(call):
+        bot_instance.answer_callback_query(call.id)
         help_text = (
             "❓ <b>Need Help Joining?</b>\n\n"
             "📋 <b>Step-by-step guide:</b>\n\n"
@@ -815,6 +824,7 @@ def register_all_handlers(bot_instance):
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "back_to_force_join")
     def back_to_force_join(call):
+        bot_instance.answer_callback_query(call.id)
         # Redirect back to the start command to show force join again
         user_id = call.from_user.id
         username = call.from_user.username or call.from_user.first_name
@@ -925,6 +935,7 @@ def register_all_handlers(bot_instance):
     # Buy Hacks main menu
     @bot_instance.callback_query_handler(func=lambda call: call.data == "hacks_menu")
     def hacks_menu(call):
+        bot_instance.answer_callback_query(call.id)
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(types.InlineKeyboardButton("🎣 Premium Phishing Kits", callback_data="phishing_kits_menu"))
         markup.add(types.InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="main_menu"))
@@ -933,6 +944,7 @@ def register_all_handlers(bot_instance):
     # Premium Phishing Kits submenu
     @bot_instance.callback_query_handler(func=lambda call: call.data == "phishing_kits_menu")
     def phishing_kits_menu(call):
+        bot_instance.answer_callback_query(call.id)
         products = get_products_from_cache("phishing_kits")
         markup = types.InlineKeyboardMarkup(row_width=1)
         if not products:
@@ -986,6 +998,7 @@ def register_all_handlers(bot_instance):
     # Dumps
     @bot_instance.callback_query_handler(func=lambda call: call.data == "dumps_menu")
     def dumps_menu(call):
+        bot_instance.answer_callback_query(call.id)
         products = get_products_from_cache("dumps")
         markup = types.InlineKeyboardMarkup(row_width=1)
         if not products:
@@ -1033,6 +1046,7 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data == "ai_search")
     def ai_search_prompt(call):
         """Prompts the user to enter their search query."""
+        bot_instance.answer_callback_query(call.id)
         # Section gating now handled via DB-backed status; legacy check removed
         user_states[call.from_user.id] = "awaiting_ai_search"
         markup = types.InlineKeyboardMarkup()
@@ -1090,6 +1104,7 @@ def register_all_handlers(bot_instance):
 
     @bot_instance.callback_query_handler(func=lambda call: call.data == "main_menu")
     def main_menu_callback(call):
+        bot_instance.answer_callback_query(call.id)
         # Check if this is a group chat
         chat_type = call.message.chat.type
         
@@ -1158,6 +1173,7 @@ def register_all_handlers(bot_instance):
     @bot_instance.callback_query_handler(func=lambda call: call.data == "rat_menu")
     def rat_menu_callback(call):
         """Handle rat menu button"""
+        bot_instance.answer_callback_query(call.id)
         rat_text = (
             "🐀 <b>RAT MENU</b> 🐀\n\n"
             "Welcome to the Rat section!\n\n"
@@ -1294,7 +1310,7 @@ def register_all_handlers(bot_instance):
     def claim_temp_key_handler(call):
         """Handler for claiming temporary keys"""
         user_id = call.from_user.id
-        
+        bot_instance.answer_callback_query(call.id)
         bot_instance.send_message(
             user_id,
             "🔑 *Enter Temporary Key Code*\n\n"
@@ -1356,7 +1372,7 @@ def register_all_handlers(bot_instance):
     def my_temp_claims_handler(call):
         """Show user's claimed temporary keys"""
         user_id = call.from_user.id
-        
+        bot_instance.answer_callback_query(call.id)
         # Get user's claims from database
         try:
             import sqlite3
@@ -1416,7 +1432,7 @@ def register_all_handlers(bot_instance):
     def enter_key_code_handler(call):
         """Handler for direct key code entry"""
         user_id = call.from_user.id
-        
+        bot_instance.answer_callback_query(call.id)
         # Create inline keyboard with example
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📝 Type Key Manually", callback_data="claim_temp_key"))
